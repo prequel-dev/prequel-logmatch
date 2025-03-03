@@ -168,15 +168,17 @@ func (r *InverseSeq) Scan(e entry.LogEntry) (hits Hits) {
 	// Run the sequence matchers.
 	nHits := r.mseq.Scan(e)
 
-	if nHits.Cnt > 0 {
-		if e.Timestamp-r.active >= r.window {
-			// We are in an active state; fire immediately.
-			hits = nHits
-		} else {
-			// These are pending
-			r.pending.Cnt += nHits.Cnt
-			r.pending.Logs = append(r.pending.Logs, nHits.Logs...)
-		}
+	switch {
+	case nHits.Cnt <= 0:
+		// No sequence match; just keep going.
+	case e.Timestamp-r.active >= r.window:
+		// We are in an active state; fire immediately.
+		hits.Cnt += nHits.Cnt
+		hits.Logs = append(hits.Logs, nHits.Logs...)
+	default:
+		// These are pending
+		r.pending.Cnt += nHits.Cnt
+		r.pending.Logs = append(r.pending.Logs, nHits.Logs...)
 	}
 
 	return
