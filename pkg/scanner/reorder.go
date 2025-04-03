@@ -3,13 +3,20 @@ package scanner
 // Reorder is a simple FIFO queue that reorders log entries
 // based on their timestamps.  It is used to ensure that
 // log entries are processed in the order they were
-// received, even if they arrive out of order.  This is
+// generated, even if they arrive out of order.  This is
 // important for log entries that are processed in a
 // distributed system, where log entries may arrive at
 // different times due to network latency or other factors.
-
-// TODO:
-// Add circuit breakers on RAM usage
+//
+// The reorder queue is implemented using two linked lists,
+// one for in order entries and one for out of order entries.
+// The in order entries are added to the inOrder list, which
+// is the typical behaviour.  An out of order entry is added
+// to the out of order list.  The lists are correlated by
+// timestamp as entries roll out of the time window enforcing
+// in order delivery.  This technique works well if the
+// the lists are generally well ordered, but will be inefficient
+// if the order is random.
 
 import (
 	"errors"
@@ -28,16 +35,51 @@ type ReorderT struct {
 	cb     ScanFuncT
 	window int64
 	clock  int64
+	mUsed  int
+	mLimit int
 	inList *rListT
 	ooList *rListT
 }
 
+type roptT struct {
+	memlimit int
+}
+
+type ROpt func(*roptT)
+
+func WithMemoryLimit(limit int) ROpt {
+	return func(o *roptT) {
+		o.memlimit = limit
+	}
+}
+
+func parseROpts(opts ...ROpt) roptT {
+	o := roptT{
+		memlimit: math.MaxInt,
+	}
+	for _, opt := range opts {
+		opt(&o)
+	}
+	return o
+}
+
 // Specify lookback window in nanoseconds; entries will
 // be reordred within this window.  This implies that
-// entires will not be delivered to 'cb' until they shift
+// entries will not be delivered to 'cb' until they shift
 // outside the window.
+//
+// Optionally provide a memory limit for the reorder buffer.
+// This is useful for limiting memory usage in the case
+// of a large number of entries within the time window.  The
+// reorder buffer is a FIFO queue, so the oldest entries
+// will be delivered on memory limit threshold, effectively
+// shifting the window forward in time.  A side effect of
+// this shift is that a subsequent out of order event may be
+// dropped because it no longer falls within the shifted window.
 
-func NewReorder(window int64, cb ScanFuncT) (*ReorderT, error) {
+func NewReorder(window int64, cb ScanFuncT, opts ...ROpt) (*ReorderT, error) {
+	o := parseROpts(opts...)
+
 	if window <= 0 {
 		return nil, ErrInvalidWindow
 	}
@@ -48,12 +90,21 @@ func NewReorder(window int64, cb ScanFuncT) (*ReorderT, error) {
 	return &ReorderT{
 		cb:     cb,
 		window: window,
+		mLimit: o.memlimit,
 		inList: newRList(),
 		ooList: newRList(),
 	}, nil
 }
 
-func (r *ReorderT) Append(entry LogEntry) bool {
+func (r *ReorderT) Append(entry LogEntry) (done bool) {
+	done = r._append(entry)
+	if r.mUsed > r.mLimit && !done {
+		done = r._trim()
+	}
+	return
+}
+
+func (r *ReorderT) _append(entry LogEntry) bool {
 
 	// Check entry is out of order
 	if entry.Timestamp < r.clock {
@@ -61,18 +112,45 @@ func (r *ReorderT) Append(entry LogEntry) bool {
 		return false
 	}
 
-	// We are in order, queue and continue
+	// We are in order, queue and continue.
+	// This is the normal case.
 	r.clock = entry.Timestamp
-	r.inList.pushBack(entry)
+	node := r.inList.pushBack(entry)
+	r.mUsed += node.Size()
+
 	return r._flush()
 }
 
 func (r *ReorderT) _flush() bool {
 	ooHead := r.ooList.front()
 	if ooHead == nil {
+		// No out of order entries, so we can
+		// use the fast path.
+		// This is the normal case.
 		return r.fastPath()
 	}
 	return r.slowPath(ooHead.entry.Timestamp)
+}
+
+func (r *ReorderT) fastPath() bool {
+
+	deadline := r.clock - r.window
+	for head := r.inList.front(); head != nil; head = r.inList.front() {
+		if head.entry.Timestamp > deadline {
+			break
+		}
+
+		r.mUsed -= head.Size()
+		if done := r.cb(head.entry); done {
+			r.drain()
+			return true
+		}
+
+		r.inList.remove(head)
+		rPoolFree(head)
+	}
+
+	return false
 }
 
 func (r *ReorderT) slowPath(ooTimestamp int64) bool {
@@ -83,18 +161,20 @@ func (r *ReorderT) slowPath(ooTimestamp int64) bool {
 
 	// Iterate across pending entries
 	for inHead := r.inList.front(); inHead != nil; inHead = r.inList.front() {
+		// Bail once was pass the deadline
 		if inHead.entry.Timestamp > deadline {
 			break
 		}
 
 		// Entry is outside window and should be delivered.
 		// Deliver any pending out of order entries that are
-		// older than the in order entry.
+		// older than the in inHead entry.
 		for ooTimestamp < inHead.entry.Timestamp {
 			var (
 				node = r.ooList.popFront()
 				done = r.cb(node.entry)
 			)
+			r.mUsed -= node.Size()
 			rPoolFree(node)
 
 			if done {
@@ -109,6 +189,8 @@ func (r *ReorderT) slowPath(ooTimestamp int64) bool {
 			}
 		}
 
+		// Deliver the inHead entry
+		r.mUsed -= inHead.Size()
 		if done := r.cb(inHead.entry); done {
 			r.drain()
 			return true
@@ -125,6 +207,7 @@ func (r *ReorderT) slowPath(ooTimestamp int64) bool {
 			node = r.ooList.popFront()
 			done = r.cb(node.entry)
 		)
+		r.mUsed -= node.Size()
 		rPoolFree(node)
 
 		if done {
@@ -136,6 +219,100 @@ func (r *ReorderT) slowPath(ooTimestamp int64) bool {
 			ooTimestamp = math.MaxInt64
 		} else {
 			ooTimestamp = ooHead.entry.Timestamp
+		}
+	}
+
+	return false
+}
+
+// _trim is called when the memory limit is reached.
+// Similar to slow path except different stop condition.
+// Also has side effect of advancing the clock.  This is
+// necessary to prevent a future out of order delivery on
+// entries before entries delivered during the trim.
+
+func (r *ReorderT) _trim() bool {
+
+	var ooTimestamp int64 = math.MaxInt64
+	if ooHead := r.ooList.front(); ooHead != nil {
+		ooTimestamp = ooHead.entry.Timestamp
+	}
+
+	// Iterate across pending entries, removing
+	// until we are back within the limit.
+	// This will by its very nature remove entries
+	// that are still inside the window, but is necessary
+	// to remain with memory constraints.
+LOOP:
+	for inHead := r.inList.front(); inHead != nil; inHead = r.inList.front() {
+		if r.mUsed <= r.mLimit {
+			break LOOP
+		}
+
+		for ooTimestamp < inHead.entry.Timestamp {
+			var (
+				node = r.ooList.popFront()
+				done = r.cb(node.entry)
+			)
+			r.mUsed -= node.Size()
+			r.clock = node.entry.Timestamp + r.window
+
+			rPoolFree(node)
+
+			if done {
+				r.drain()
+				return true
+			}
+
+			if ooHead := r.ooList.front(); ooHead == nil {
+				ooTimestamp = math.MaxInt64
+			} else {
+				ooTimestamp = ooHead.entry.Timestamp
+			}
+
+			// If we are back within range, exit the inLoop entirely
+			if r.mUsed <= r.mLimit {
+				break LOOP
+			}
+		}
+
+		done := r.cb(inHead.entry)
+		r.mUsed -= inHead.Size()
+		r.clock = inHead.entry.Timestamp + r.window
+		r.inList.remove(inHead)
+		rPoolFree(inHead)
+
+		if done {
+			r.drain()
+			return true
+		}
+	}
+
+	if r.mUsed <= r.mLimit {
+		return false
+	}
+
+	// If we are still over the limit after removing
+	// all inList entries. Deliver the oldest out of order entries.
+	// This can happen when the clock is advanced past the timestamp
+	// of the subsequent delivered entries and so they all appear out
+	// of order.
+
+LOOP2:
+	for node := r.ooList.popFront(); node != nil; node = r.ooList.popFront() {
+
+		done := r.cb(node.entry)
+		r.mUsed -= node.Size()
+		r.clock = node.entry.Timestamp + r.window
+		rPoolFree(node)
+
+		if done {
+			r.drain()
+			return true
+		}
+
+		if r.mUsed <= r.mLimit {
+			break LOOP2
 		}
 	}
 
@@ -158,26 +335,6 @@ func (r *ReorderT) Flush() (done bool) {
 	done = r.AdvanceClock(math.MaxInt64)
 	r.drain()
 	return done
-}
-
-func (r *ReorderT) fastPath() bool {
-
-	deadline := r.clock - r.window
-	for head := r.inList.front(); head != nil; head = r.inList.front() {
-		if head.entry.Timestamp > deadline {
-			break
-		}
-
-		if done := r.cb(head.entry); done {
-			r.drain()
-			return true
-		}
-
-		r.inList.remove(head)
-		rPoolFree(head)
-	}
-
-	return false
 }
 
 // O(n): Maintain order invariant on insert.
@@ -203,16 +360,19 @@ func (r *ReorderT) queueOutofOrder(entry LogEntry) {
 		}
 	}
 	if node == nil {
-		r.ooList.pushFront(entry)
+		node = r.ooList.pushFront(entry)
 	} else {
 		r.ooList.insert(entry, node)
 	}
+
+	r.mUsed += node.Size()
 }
 
 func (r *ReorderT) drain() {
 	r.ooList.free()
 	r.inList.free()
 	r.clock = 0
+	r.mUsed = 0
 }
 
 // ----
@@ -236,6 +396,12 @@ type rnodeT struct {
 	entry LogEntry
 	next  *rnodeT
 	prev  *rnodeT
+}
+
+const nodeSize = 80
+
+func (r *rnodeT) Size() int {
+	return nodeSize + len(r.entry.Line)
 }
 
 type rListT struct {
