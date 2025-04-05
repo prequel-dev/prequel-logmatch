@@ -2,8 +2,7 @@ package scanner
 
 import (
 	"strings"
-
-	"github.com/prequel-dev/prequel-logmatch/pkg/format"
+	"unicode/utf8"
 )
 
 func bindFold(scanF ScanFuncT, errF ErrFuncT) (ScanFuncT, ErrFuncT, flushFuncT) {
@@ -40,7 +39,9 @@ func bindFold(scanF ScanFuncT, errF ErrFuncT) (ScanFuncT, ErrFuncT, flushFuncT) 
 
 	// On error, append line to pending entry
 	nErrF := func(line []byte, err error) error {
-		if err == format.ErrMatchTimestamp {
+		// Relax error check; but validate utf8.
+		// Occasionally binary garbage is seen in the log stream.
+		if utf8.Valid(line) {
 			if builder.Len() == 0 {
 				builder.WriteString(pending.Line)
 			}
@@ -52,6 +53,10 @@ func bindFold(scanF ScanFuncT, errF ErrFuncT) (ScanFuncT, ErrFuncT, flushFuncT) 
 	// On final flush, emit pending entry if exists
 	nFlushF := func() (done bool) {
 		if pending.Timestamp != 0 {
+			if builder.Len() > 0 {
+				pending.Line = builder.String()
+				builder.Reset()
+			}
 			done = scanF(pending)
 		}
 		return

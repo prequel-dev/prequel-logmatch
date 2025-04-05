@@ -25,9 +25,9 @@ func TestReadCriEntry(t *testing.T) {
 	}{
 		"empty":                  {data: "", werr: ErrNoTimestamp},
 		"ts_no_delimeter":        {data: "2016", werr: ErrNoTimestamp},
-		"ts_short1":              {data: "2016 ", werr: ErrParseTimesamp},
-		"ts_short2":              {data: "2016-10-06T00:17:09 ", werr: ErrParseTimesamp},
-		"ts_malformed":           {data: "2016-10-06T00:17:09.669794202z ", werr: ErrParseTimesamp},
+		"ts_short1":              {data: "2016 ", werr: ErrParseTimestamp},
+		"ts_short2":              {data: "2016-10-06T00:17:09 ", werr: ErrParseTimestamp},
+		"ts_malformed":           {data: "2016-10-06T00:17:09.669794202z ", werr: ErrParseTimestamp},
 		"ts_short_ok":            {data: shortTimestampS + " ", werr: ErrNoStreamType},
 		"ts_ok_no_stream":        {data: longTimestampS + " ", werr: ErrNoStreamType},
 		"malformed_stream":       {data: longTimestampS + "  ", werr: ErrUnknownStream},

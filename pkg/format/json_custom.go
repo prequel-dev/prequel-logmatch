@@ -69,7 +69,7 @@ func (f *jsonCustomFmtT) ReadTimestamp(rdr io.Reader) (ts int64, err error) {
 func (f *jsonCustomFmtT) parseTime(stime string) (ts int64, err error) {
 	t, err := time.Parse(f.fmtTime, stime)
 	if err != nil {
-		err = errors.Join(ErrParseTimesamp, err)
+		err = errors.Join(ErrParseTimestamp, err)
 		return
 	}
 

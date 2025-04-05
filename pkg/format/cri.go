@@ -75,7 +75,7 @@ func (f *criFmtT) ReadEntry(line []byte) (entry LogEntry, err error) {
 
 	ts, err := time.Parse(time.RFC3339Nano, string(line[:idx]))
 	if err != nil {
-		err = errors.Join(ErrParseTimesamp, err)
+		err = errors.Join(ErrParseTimestamp, err)
 		return
 	}
 
