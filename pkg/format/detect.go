@@ -23,15 +23,15 @@ type DetectFormatFunc func(line []byte) (FactoryI, int64, error)
 var supportedFormats = []DetectFormatFunc{
 	detectJSON,
 	detectCri,
-	detectRFC339Nano, // must come after detectCri since they both start with RFC3339Nano
+	detectRFC3339Nano, // must come after detectCri since they both start with RFC3339Nano
 }
 
 const (
-	FactoryJSON       = "json"
-	FactoryRegex      = "regex"
-	FactoryRfc339Nano = "rfc339Nano"
-	FactoryJSONCustom = "json_custom"
-	FactoryCRI        = "cri"
+	FactoryJSON        = "json"
+	FactoryRegex       = "regex"
+	FactoryRfc3339Nano = "rfc3339Nano"
+	FactoryJSONCustom  = "json_custom"
+	FactoryCRI         = "cri"
 )
 
 const (
