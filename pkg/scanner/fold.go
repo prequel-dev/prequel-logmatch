@@ -39,14 +39,20 @@ func bindFold(scanF ScanFuncT, errF ErrFuncT) (ScanFuncT, ErrFuncT, flushFuncT) 
 
 	// On error, append line to pending entry
 	nErrF := func(line []byte, err error) error {
-		// Relax error check; but validate utf8.
-		// Occasionally binary garbage is seen in the log stream.
-		if utf8.Valid(line) {
-			if builder.Len() == 0 {
-				builder.WriteString(pending.Line)
-			}
+		switch {
+		case !utf8.Valid(line):
+			// Data is not valid UTF8; ignore.
+			// Occasionally binary garbage is seen in the log stream.
+		case builder.Len() > 0:
+			// We've already appended to the builder, append.
+			builder.Write(line)
+		case pending.Timestamp == 0:
+			// No pending line, ignore the unparsable line
+		default:
+			builder.WriteString(pending.Line)
 			builder.Write(line)
 		}
+
 		return errF(line, err)
 	}
 
