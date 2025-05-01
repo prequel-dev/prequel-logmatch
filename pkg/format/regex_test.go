@@ -103,3 +103,72 @@ func TestRegexCustomCb(t *testing.T) {
 		t.Errorf("Expected %d got %d", 1618070400000000000, ts)
 	}
 }
+
+func TestMungeYear(t *testing.T) {
+
+	var (
+		baseTime = time.Date(0, 1, 1, 0, 0, 0, 0, time.UTC)
+		baseNow  = time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	)
+
+	tests := map[string]struct {
+		delta time.Duration
+		want  time.Time
+	}{
+		"simple": {
+			delta: 0,
+		},
+		"slightly in the future": {
+			delta: time.Hour * 24,
+		},
+		"slightly in the past": {
+			delta: -time.Hour * 24,
+		},
+		"4 weeks in the past": {
+			delta: -time.Hour * 24 * 7,
+		},
+		"36 weeks in the past": {
+			delta: -time.Hour * 24 * 7 * 36,
+		},
+		"44 weeks in the past interpreted as the future": {
+			delta: -time.Hour * 24 * 7 * 44,
+			want:  time.Date(2020, 2, 27, 0, 0, 0, 0, time.UTC),
+		},
+		"4 weeks in the future": {
+			delta: time.Hour * 24 * 7 * 4,
+		},
+		"8 weeks in the future": {
+			delta: time.Hour * 24 * 7 * 8,
+		},
+		"8 weeks and 4 days in the future minus 1 hour": {
+			delta: time.Hour*24*7*8 + 4*time.Hour*24 - time.Hour,
+			want:  time.Date(2020, 2, 29, 23, 0, 0, 0, time.UTC),
+		},
+		"8 weeks and 4 days in the future": {
+			delta: time.Hour*24*7*8 + 4*time.Hour*24,
+			want:  time.Date(2019, 3, 1, 0, 0, 0, 0, time.UTC),
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+
+			src := baseTime.Add(tc.delta)
+			got := mungeYear(baseNow, src)
+
+			if src.Year() > 0 {
+				t.Errorf("Expected %d got %d", 0, src.Year())
+			}
+
+			ts := time.Unix(0, got).UTC()
+
+			if tc.want.IsZero() {
+				tc.want = baseNow.Add(tc.delta)
+			}
+
+			if !ts.Equal(tc.want) {
+				t.Errorf("Expected %s got %s", tc.want, ts)
+			}
+		})
+	}
+}

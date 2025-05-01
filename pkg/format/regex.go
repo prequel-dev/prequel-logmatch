@@ -32,7 +32,14 @@ func WithTimeFormat(fmtTime string) TimeFormatCbT {
 			return 0, err
 		}
 
-		return t.UTC().UnixNano(), nil
+		ts := t.UTC().UnixNano()
+
+		// It is possible that the format does not have a year.  Check and adjust.
+		if ts < 0 && t.Year() == 0 {
+			ts = mungeYear(time.Now().UTC(), t)
+		}
+
+		return ts, nil
 	}
 }
 
@@ -109,4 +116,32 @@ func (f *regexFmtT) ReadEntry(data []byte) (entry LogEntry, err error) {
 	entry.Line = string(data)
 	entry.Timestamp = ts
 	return
+}
+
+// Year was not specified in the time format.
+// Assume this year unless the time in in the future,
+// in which case assume the previous year.
+
+func mungeYear(now, t time.Time) int64 {
+	var (
+		dstYear  = now.Year()
+		nowMonth = now.Month()
+		tsMonth  = t.Month()
+	)
+
+	// If the timestamp month is in the future, then assume the year is the previous year.
+	// We will do this calculation to month resolution, and add in some slop tolerance.
+	// Could be more precise if necessary, but most logs that do not specify a year are short lived.
+	switch {
+	case tsMonth == nowMonth:
+		// Normal case; the timestamp refers to this year.
+	case tsMonth < nowMonth:
+		// Timestamp from a previous month assume this year.
+	case tsMonth > nowMonth && tsMonth-nowMonth > 1:
+		// More than 11 months in the future is considered last year
+		dstYear -= 1
+	}
+
+	nTime := time.Date(dstYear, tsMonth, t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), time.UTC)
+	return nTime.UnixNano()
 }
