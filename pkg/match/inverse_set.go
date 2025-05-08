@@ -21,18 +21,19 @@ type InverseSet struct {
 
 func NewInverseSet(window int64, setTerms []TermT, resetTerms []ResetT) (*InverseSet, error) {
 
-	if len(setTerms) > 64 {
-		return nil, ErrTooManyTerms
-	}
-	if len(setTerms) == 0 {
-		return nil, ErrNoTerms
-	}
-
 	var (
 		resets []resetT
+		nTerms = len(setTerms)
 		dupes  = make(map[TermT]struct{})
-		terms  = make([]termT, 0, len(setTerms))
+		terms  = make([]termT, 0, nTerms)
 	)
+
+	if nTerms > 64 {
+		return nil, ErrTooManyTerms
+	}
+	if nTerms == 0 {
+		return nil, ErrNoTerms
+	}
 
 	for _, term := range setTerms {
 		m, err := term.NewMatcher()

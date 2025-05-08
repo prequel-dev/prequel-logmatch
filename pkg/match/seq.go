@@ -5,10 +5,10 @@ import (
 )
 
 // MatchSeq implements a simplistic state machine where transaction from one
-// state (slot) to the next is a succesful match.  When machine reaches final state
+// state (slot) to the next is a successful match.  When machine reaches final state
 // (ie. all slots active), a match is emitted.
 //
-// The state machine will reset if the intial matching slot ages out of the time window.
+// The state machine will reset if the initial matching slot ages out of the time window.
 // The machine is edge triggered, state can only change on a new event.  As such,
 // it works properly when scanning a log that is not aligned with real time.
 //
@@ -172,7 +172,7 @@ func (r *MatchSeq) miniGC() {
 	)
 
 	// Do not allocate if not processing dupes.
-	// Dupe detection  is used to prune duplicate terms
+	// Dupe detection is used to prune duplicate terms
 	// that are incorrectly activated due to garbage collection.
 	if !r.dupeMask.Zeros() {
 		dupes = make(map[dupeT]struct{}, len(r.terms))

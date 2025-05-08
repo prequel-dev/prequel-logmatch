@@ -14,40 +14,65 @@ type MatchSet struct {
 	gcMark  int64
 	hotMask bitMaskT
 	terms   []termT
+	dupeMap map[int]int
 }
 
 func NewMatchSet(window int64, setTerms ...TermT) (*MatchSet, error) {
 
 	var (
-		dupes  = make(map[TermT]struct{})
 		nTerms = len(setTerms)
-		terms  = make([]termT, nTerms)
+		dupes  = make(map[TermT]int, nTerms)
+		terms  = make([]termT, 0, nTerms)
 	)
 
-	if len(setTerms) == 0 {
+	if nTerms == 0 {
 		return nil, ErrNoTerms
 	}
 
-	if len(setTerms) > 64 {
+	if nTerms > 64 {
 		return nil, ErrTooManyTerms
 	}
 
+	// First pass to get term counts
+	for _, term := range setTerms {
+		dupes[term]++
+	}
+
+	var dupeMap map[int]int
+
+	// Iterate over the terms again to build the matcher list
 	for i, term := range setTerms {
-		if m, err := term.NewMatcher(); err != nil {
-			return nil, err
-		} else {
-			terms[i].matcher = m
+
+		cnt := dupes[term]
+
+		if cnt >= 1 {
+
+			m, err := term.NewMatcher()
+			if err != nil {
+				return nil, err
+			}
+
+			terms = append(terms, termT{matcher: m})
+
+			if cnt > 1 {
+
+				// We have a dupe; add it to the dupeMap
+				if dupeMap == nil {
+					dupeMap = make(map[int]int)
+				}
+				dupeMap[i] = cnt
+
+				// Delete term from the map to prevent adding it again
+				delete(dupes, term)
+			}
 		}
-		if _, ok := dupes[term]; ok {
-			return nil, ErrDuplicateTerm
-		}
-		dupes[term] = struct{}{}
 	}
 
 	return &MatchSet{
-		terms:  terms,
-		window: window,
-		gcMark: disableGC,
+		terms:   terms,
+		window:  window,
+		gcMark:  disableGC,
+		dupeMap: dupeMap, // 8 bytes overhead if nil, same as a bitmask
 	}, nil
 }
 
@@ -69,7 +94,9 @@ func (r *MatchSet) Scan(e LogEntry) (hits Hits) {
 	for i, term := range r.terms {
 		if term.matcher(e.Line) {
 			r.terms[i].asserts = append(r.terms[i].asserts, e)
-			r.hotMask.Set(i)
+			if dupeCnt, ok := r.dupeMap[i]; !ok || len(r.terms[i].asserts) >= dupeCnt {
+				r.hotMask.Set(i)
+			}
 			if e.Timestamp < r.gcMark {
 				r.gcMark = e.Timestamp
 			}
@@ -82,23 +109,38 @@ func (r *MatchSet) Scan(e LogEntry) (hits Hits) {
 
 	// We have a full frame; fire and prune.
 	hits.Cnt = 1
-	hits.Logs = make([]LogEntry, 0, len(r.terms))
+	hits.Logs = make([]LogEntry, 0, len(r.terms)) // Not quite if dupes are present
 
 	r.gcMark = disableGC
 	for i, term := range r.terms {
+
+		hitCnt := 1
+		dupeCnt := r.dupeMap[i]
+		if dupeCnt > 0 {
+			hitCnt = dupeCnt
+		}
+
 		m := term.asserts
-		hits.Logs = append(hits.Logs, m[0])
-		if len(m) == 1 && cap(m) <= capThreshold {
+		hits.Logs = append(hits.Logs, m[0:hitCnt]...)
+		if len(m) == hitCnt && cap(m) <= capThreshold {
 			m = m[:0]
 		} else {
-			m = m[1:]
+			m = m[hitCnt:]
 		}
 		r.terms[i].asserts = m
 
 		if len(m) == 0 {
 			r.hotMask.Clr(i)
-		} else if m[0].Timestamp < r.gcMark {
-			r.gcMark = m[0].Timestamp
+		} else {
+			// Clear the hot mask if there's a dupeCnt and we're under it
+			if len(m) < dupeCnt {
+				r.hotMask.Clr(i)
+			}
+
+			// Update the gcMark if earliest timestamp is less than the current gcMark
+			if v := m[0].Timestamp; v < r.gcMark {
+				r.gcMark = v
+			}
 		}
 	}
 
@@ -106,7 +148,7 @@ func (r *MatchSet) Scan(e LogEntry) (hits Hits) {
 }
 
 func (r *MatchSet) maybeGC(clock int64) {
-	if r.hotMask.Zeros() || clock-r.gcMark <= r.window {
+	if (r.hotMask.Zeros() && r.dupeMap == nil) || clock-r.gcMark <= r.window {
 		return
 	}
 
@@ -135,12 +177,22 @@ func (r *MatchSet) GarbageCollect(clock int64) {
 			shiftLeft(r.terms, i, cnt)
 		}
 
-		m := r.terms[i].asserts
+		var (
+			m       = r.terms[i].asserts
+			dupeCnt = r.dupeMap[i]
+		)
+
 		if len(m) == 0 {
 			r.hotMask.Clr(i)
-		} else if v := m[0].Timestamp; v < r.gcMark {
-			r.gcMark = v
+		} else {
+			if len(m) < dupeCnt {
+				r.hotMask.Clr(i)
+			}
+			if v := m[0].Timestamp; v < r.gcMark {
+				r.gcMark = v
+			}
 		}
+
 	}
 }
 

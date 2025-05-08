@@ -110,6 +110,75 @@ func TestSet(t *testing.T) {
 				{postF: checkHotMask[MatchSet](0b0)},
 			},
 		},
+
+		"SimpleDupes": {
+			// -1-2----------------
+			// Dupe terms are tolerated.
+			window: 5,
+			terms:  []string{"alpha", "alpha"},
+			steps: []step{
+				{line: "alpha"},
+				{line: "alpha", cb: matchStamps(1, 2)},
+			},
+		},
+
+		"SimpleDupesSameTimestamp": {
+			// -1-2----------------
+			// Dupe terms are tolerated.
+			window: 5,
+			terms:  []string{"alpha", "alpha"},
+			steps: []step{
+				{line: "alpha", stamp: 1},
+				{line: "alpha", stamp: 1, cb: matchStamps(1, 1)},
+			},
+		},
+
+		"DupesWithOtherTerms": {
+			// -1---3-------------
+			// ---2---------------
+			// Dupe terms are tolerated.
+			window: 5,
+			terms:  []string{"alpha", "alpha", "beta"},
+			steps: []step{
+				{line: "alpha"},
+				{line: "beta"},
+				{line: "alpha", cb: matchStamps(1, 3, 2)},
+			},
+		},
+
+		"DupesSpecifiedOutofOrder": {
+			// -1---3-------------
+			// ---2---------------
+			// Dupe terms are tolerated.
+			window: 5,
+			terms:  []string{"alpha", "beta", "alpha"},
+			steps: []step{
+				{line: "alpha"},
+				{line: "beta"},
+				{line: "alpha", cb: matchStamps(1, 3, 2)},
+			},
+		},
+
+		"DupesObeyWindow": {
+			// -1---3-------------
+			// ---2---------------
+			// Dupe terms are tolerated.
+			window: 5,
+			terms:  []string{"alpha", "beta", "alpha"},
+			steps: []step{
+				{line: "alpha"},
+				{line: "beta"},
+				{line: "alpha", stamp: 7},
+				{line: "alpha", stamp: 8},
+				{line: "beta", stamp: 11, cb: matchStamps(7, 8, 11)},
+				{line: "beta", postF: checkHotMask[MatchSet](0b10)},
+				{line: "alpha", postF: checkHotMask[MatchSet](0b10)},
+				{line: "beta"},
+				{line: "alpha", stamp: 19},
+				{line: "alpha", stamp: 19, cb: matchStamps(19, 19, 14)},
+				{line: "nope", postF: checkHotMask[MatchSet](0b0)},
+			},
+		},
 	}
 
 	for name, tc := range tests {
@@ -148,14 +217,5 @@ func TestSet(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-// Dupes not yet implemented.
-func TestSetDupes(t *testing.T) {
-
-	_, err := NewMatchSet(10, makeTermsA("alpha", "alpha")...)
-	if err != ErrDuplicateTerm {
-		t.Fatalf("Expected err == ErrDuplicateTerm, got %v", err)
 	}
 }
