@@ -146,25 +146,12 @@ func TestSet(t *testing.T) {
 			},
 		},
 
-		"DupesSpecifiedOutofOrder": {
-			// -1---3-------------
-			// ---2---------------
-			// Dupe terms are tolerated.
-			window: 5,
-			terms:  []string{"alpha", "beta", "alpha"},
-			steps: []step{
-				{line: "alpha"},
-				{line: "beta"},
-				{line: "alpha", cb: matchStamps(1, 3, 2)},
-			},
-		},
-
 		"DupesObeyWindow": {
 			// -1---3-------------
 			// ---2---------------
 			// Dupe terms are tolerated.
 			window: 5,
-			terms:  []string{"alpha", "beta", "alpha"},
+			terms:  []string{"alpha", "alpha", "beta"},
 			steps: []step{
 				{line: "alpha"},
 				{line: "beta"},

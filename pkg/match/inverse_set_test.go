@@ -563,6 +563,195 @@ func TestSetInverse(t *testing.T) {
 				{line: "NOOP", stamp: 10000, cb: matchStamps(1, 2)}, // way out of reset window
 			},
 		},
+
+		"SimpleNoResetDupeTerms": {
+			// -1-2----------------
+			// Dupe terms are tolerated.
+			window: 5,
+			terms:  []string{"alpha", "alpha"},
+			steps: []step{
+				{line: "alpha"},
+				{line: "alpha", cb: matchStamps(1, 2)},
+			},
+		},
+
+		"SimpleDupeTermsWithReset": {
+			// -1-2----------------
+			// Dupe terms are tolerated.
+			window: 5,
+			terms:  []string{"alpha", "alpha"},
+			reset: []ResetT{
+				{
+					Term:     makeRaw("reset"),
+					Window:   50,
+					Absolute: true,
+				},
+			},
+			steps: []step{
+				{line: "alpha"},
+				{line: "alpha"},
+				{line: "NOOP", stamp: 51}, // reset window + 1
+				{line: "NOOP", stamp: 52, cb: matchStamps(1, 2)},
+			},
+		},
+
+		"SimpleDupeTermsWithResetFires": {
+			// -1-2----------------
+			// Dupe terms are tolerated.
+			window: 5,
+			terms:  []string{"alpha", "alpha"},
+			reset: []ResetT{
+				{
+					Term:     makeRaw("reset"),
+					Window:   50,
+					Absolute: true,
+				},
+			},
+			steps: []step{
+				{line: "alpha"},
+				{line: "alpha"},
+				{line: "reset", stamp: 51}, // reset window + 1
+				{line: "NOOP", stamp: 52},  // should not fire due to reset at 51
+			},
+		},
+
+		"SimpleNoResetDupeTermsSameTimestamp": {
+			// -1-2----------------
+			// Dupe terms are tolerated.
+			window: 5,
+			terms:  []string{"alpha", "alpha"},
+			steps: []step{
+				{line: "alpha", stamp: 1},
+				{line: "alpha", stamp: 1, cb: matchStamps(1, 1)},
+			},
+		},
+
+		"SimpleDupeTermsSameTimestampWithReset": {
+			// -1-2----------------
+			// Dupe terms are tolerated.
+			window: 5,
+			terms:  []string{"alpha", "alpha"},
+			reset: []ResetT{
+				{
+					Term:     makeRaw("reset"),
+					Window:   50,
+					Absolute: true,
+				},
+			},
+			steps: []step{
+				{line: "alpha", stamp: 1},
+				{line: "alpha", stamp: 1},
+				{line: "NOOP", stamp: 51}, // reset window + 1
+				{line: "NOOP", stamp: 52, cb: matchStamps(1, 1)},
+			},
+		},
+
+		"DupeNoResetsWithOtherTerms": {
+			// -1---3-------------
+			// ---2---------------
+			// Dupe terms are tolerated.
+			window: 5,
+			terms:  []string{"alpha", "alpha", "alpha", "beta"},
+			steps: []step{
+				{line: "alpha"},
+				{line: "beta"},
+				{line: "alpha"},
+				{line: "alpha", cb: matchStamps(1, 3, 4, 2)},
+			},
+		},
+
+		"DupeResetsWithOtherTerms": {
+			// -1---3-------------
+			// ---2---------------
+			// Dupe terms are tolerated.
+			window: 5,
+			terms:  []string{"alpha", "alpha", "alpha", "beta"},
+			reset: []ResetT{
+				{
+					Term: makeRaw("reset"),
+				},
+			},
+			steps: []step{
+				{line: "alpha"},
+				{line: "beta"},
+				{line: "alpha"},
+				{line: "alpha"},
+				{line: "NOOP", cb: matchStamps(1, 3, 4, 2)}, // Must wait until outside relative window to fire
+			},
+		},
+
+		"DupesObeyWindow": {
+			// -1---3-------------
+			// ---2---------------
+			// Dupe terms are tolerated.
+			window: 5,
+			terms:  []string{"alpha", "alpha", "beta"},
+			steps: []step{
+				{line: "alpha"},
+				{line: "beta"},
+				{line: "alpha", stamp: 7},
+				{line: "alpha", stamp: 8},
+				{line: "beta", stamp: 11, cb: matchStamps(7, 8, 11)},
+				{line: "beta", postF: checkHotMask[InverseSet](0b10)},
+				{line: "alpha", postF: checkHotMask[InverseSet](0b10)},
+				{line: "beta"},
+				{line: "alpha", stamp: 19},
+				{line: "alpha", stamp: 19, cb: matchStamps(19, 19, 14)},
+				{line: "nope", postF: checkHotMask[InverseSet](0b0)},
+			},
+		},
+
+		"DupeTermWithOffsetAnchor": {
+			// -1---3-------------
+			// ---2---------------
+			// Dupe terms are tolerated.
+			window: 20,
+			terms:  []string{"alpha", "alpha", "alpha", "beta"},
+			reset: []ResetT{
+				{
+					Term:     makeRaw("reset"),
+					Anchor:   2,
+					Window:   20,
+					Absolute: true,
+				},
+			},
+			steps: []step{
+				{line: "alpha"},
+				{line: "beta"},
+				{line: "alpha", stamp: 11}, // This is the anchor term, reset will wait until window past this.
+				{line: "alpha", stamp: 15},
+				{line: "NOOP", stamp: 31}, // Should not fire, must be past anchor + window
+				{line: "NOOP", stamp: 32, cb: matchStamps(1, 11, 15, 2)},
+			},
+		},
+
+		"DupeTermWithOffsetAnchorResetFire": {
+			// -1---3-------------
+			// ---2---------------
+			// Dupe terms are tolerated.
+			window: 50,
+			terms:  []string{"alpha", "alpha", "beta", "alpha"},
+			reset: []ResetT{
+				{
+					Term:     makeRaw("reset"),
+					Anchor:   2,
+					Window:   20,
+					Absolute: true,
+				},
+			},
+			steps: []step{
+				{line: "alpha"},
+				{line: "beta"},
+				{line: "alpha", stamp: 11}, // This is the anchor term, reset will wait until window past this.
+				{line: "alpha", stamp: 15},
+				{line: "reset", stamp: 31}, // Should not fire; should prune second alpha
+				{line: "NOOP", stamp: 32},
+				{line: "alpha"},
+				{line: "alpha"},
+				{line: "NOOP", stamp: 53},
+				{line: "NOOP", stamp: 54, cb: matchStamps(1, 33, 34, 2)},
+			},
+		},
 	}
 
 	for name, tc := range tests {
@@ -619,15 +808,6 @@ func TestSetInverseBadAnchor(t *testing.T) {
 	_, err := NewInverseSet(window, makeTermsA("alpha", "beta"), resets)
 	if err != ErrAnchorRange {
 		t.Fatalf("Expected err == ErrAnchorRange, got %v", err)
-	}
-}
-
-// Dupes not yet implemented.
-func TestSetInverseDupes(t *testing.T) {
-
-	_, err := NewInverseSet(10, makeTermsA("alpha", "alpha"), nil)
-	if err != ErrDuplicateTerm {
-		t.Fatalf("Expected err == ErrDuplicateTerm, got %v", err)
 	}
 }
 
@@ -704,7 +884,7 @@ func BenchmarkSetInverseHitOverlap(b *testing.B) {
 	zerolog.SetGlobalLevel(zerolog.Disabled)
 	defer zerolog.SetGlobalLevel(level)
 
-	sm, err := NewInverseSet(10, makeTermsA("frank", "burns"), nil)
+	sm, err := NewInverseSet(10, makeTermsA("frank", "burns"), []ResetT{{Term: makeRaw("reset1"), Window: 1, Absolute: true}})
 	if err != nil {
 		b.Fatalf("Expected err == nil, got %v", err)
 	}

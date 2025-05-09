@@ -20,25 +20,23 @@ type MatchSet struct {
 func NewMatchSet(window int64, setTerms ...TermT) (*MatchSet, error) {
 
 	var (
-		nTerms = len(setTerms)
-		dupes  = make(map[TermT]int, nTerms)
-		terms  = make([]termT, 0, nTerms)
+		dupeMap map[int]int
+		nTerms  = len(setTerms)
+		dupes   = make(map[TermT]int, nTerms)
+		terms   = make([]termT, 0, nTerms)
 	)
 
-	if nTerms == 0 {
-		return nil, ErrNoTerms
-	}
-
-	if nTerms > 64 {
+	switch {
+	case nTerms > 64:
 		return nil, ErrTooManyTerms
+	case nTerms == 0:
+		return nil, ErrNoTerms
 	}
 
 	// First pass to get term counts
 	for _, term := range setTerms {
 		dupes[term]++
 	}
-
-	var dupeMap map[int]int
 
 	// Iterate over the terms again to build the matcher list
 	for i, term := range setTerms {
@@ -93,10 +91,15 @@ func (r *MatchSet) Scan(e LogEntry) (hits Hits) {
 	// Cannot short circuit like a sequence.
 	for i, term := range r.terms {
 		if term.matcher(e.Line) {
+			// Append the match to the assert list
 			r.terms[i].asserts = append(r.terms[i].asserts, e)
+
+			// If not a dupe or we've hit the dupe count, set the hot mask
 			if dupeCnt, ok := r.dupeMap[i]; !ok || len(r.terms[i].asserts) >= dupeCnt {
 				r.hotMask.Set(i)
 			}
+
+			// Update the gcMark if the timestamp is less than the current gcMark
 			if e.Timestamp < r.gcMark {
 				r.gcMark = e.Timestamp
 			}

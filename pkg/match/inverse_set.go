@@ -1,6 +1,7 @@
 package match
 
 import (
+	"cmp"
 	"math"
 	"slices"
 
@@ -17,34 +18,57 @@ type InverseSet struct {
 	hotMask bitMaskT
 	terms   []termT
 	resets  []resetT
+	dupeMap map[int]int
 }
 
 func NewInverseSet(window int64, setTerms []TermT, resetTerms []ResetT) (*InverseSet, error) {
 
 	var (
-		resets []resetT
-		nTerms = len(setTerms)
-		dupes  = make(map[TermT]struct{})
-		terms  = make([]termT, 0, nTerms)
+		resets  []resetT
+		dupeMap map[int]int
+		nTerms  = len(setTerms)
+		dupes   = make(map[TermT]int, nTerms)
+		terms   = make([]termT, 0, nTerms)
 	)
 
-	if nTerms > 64 {
+	switch {
+	case nTerms > 64:
 		return nil, ErrTooManyTerms
-	}
-	if nTerms == 0 {
+	case nTerms == 0:
 		return nil, ErrNoTerms
 	}
 
+	// First pass to get term counts
 	for _, term := range setTerms {
-		m, err := term.NewMatcher()
-		if err != nil {
-			return nil, err
+		dupes[term]++
+	}
+
+	// Iterate over the terms again to build the matcher list
+	for i, term := range setTerms {
+
+		cnt := dupes[term]
+
+		if cnt >= 1 {
+
+			m, err := term.NewMatcher()
+			if err != nil {
+				return nil, err
+			}
+
+			terms = append(terms, termT{matcher: m})
+
+			if cnt > 1 {
+
+				// We have a dupe; add it to the dupeMap
+				if dupeMap == nil {
+					dupeMap = make(map[int]int)
+				}
+				dupeMap[i] = cnt
+
+				// Delete term from the map to prevent adding it again
+				delete(dupes, term)
+			}
 		}
-		terms = append(terms, termT{matcher: m})
-		if _, ok := dupes[term]; ok {
-			return nil, ErrDuplicateTerm
-		}
-		dupes[term] = struct{}{}
 	}
 
 	if len(resetTerms) > 0 {
@@ -77,6 +101,7 @@ func NewInverseSet(window int64, setTerms []TermT, resetTerms []ResetT) (*Invers
 		gcMark:  disableGC,
 		terms:   terms,
 		resets:  resets,
+		dupeMap: dupeMap,
 	}, nil
 }
 
@@ -97,8 +122,15 @@ func (r *InverseSet) Scan(e entry.LogEntry) (hits Hits) {
 	// Cannot short circuit like a sequence.
 	for i, term := range r.terms {
 		if term.matcher(e.Line) {
+			// Append the match to the assert list
 			r.terms[i].asserts = append(r.terms[i].asserts, e)
-			r.hotMask.Set(i)
+
+			// If not a dupe or we've hit the dupe count, set the hot mask
+			if dupeCnt, ok := r.dupeMap[i]; !ok || len(r.terms[i].asserts) >= dupeCnt {
+				r.hotMask.Set(i)
+			}
+
+			// Update the gcMark given the timestamp of the match
 			r.resetGcMark(e.Timestamp + r.gcRight)
 		}
 	}
@@ -129,32 +161,37 @@ func (r *InverseSet) Eval(clock int64) (hits Hits) {
 
 	for r.hotMask.FirstN(nTerms) {
 
-		var drop = -1
+		drop := anchorT{term: -1}
 
 		// Cannot depend on GC to determine whether we are still in the window.
 		// This is because we might have an extended GC due to a long reset window.
 		mIdx, tStart, tStop := r.frameMatch()
 
 		if tStop-tStart > r.window {
-			drop = mIdx
+			drop.term = mIdx
 		} else if r.resets != nil {
-			retryNanos, anchor := r.checkReset(clock)
+			anchor := r.checkReset(clock)
 
 			switch {
-			case anchor != math.MaxUint8:
-				drop = int(anchor)
-			case retryNanos > 0:
+			case anchor.ValidTerm():
+				drop = anchor
+			case anchor.clock > 0:
 				// We have a match that is too recent; we must wait.
 				return
 			}
 		}
 
-		if drop >= 0 {
+		if drop.ValidTerm() {
 			// We have a negative match;
 			// remove the offending term assert and continue.
-			if shiftLeft(r.terms, drop, 1) == 0 {
-				r.hotMask.Clr(drop)
+			if dupeCnt := r.dupeMap[drop.term]; dupeCnt <= 0 {
+				if shiftLeft(r.terms, drop.term, 1) == 0 {
+					r.hotMask.Clr(drop.term)
+				}
+			} else if cnt := shiftAnchor(r.terms, drop); cnt < dupeCnt {
+				r.hotMask.Clr(drop.term)
 			}
+
 		} else {
 			// Fire hit and prune first assert from each term.
 			hits.Cnt += 1
@@ -163,8 +200,12 @@ func (r *InverseSet) Eval(clock int64) (hits Hits) {
 			}
 
 			for i, term := range r.terms {
-				hits.Logs = append(hits.Logs, term.asserts[0])
-				if shiftLeft(r.terms, i, 1) == 0 {
+				cnt := 1
+				if dupeCnt, ok := r.dupeMap[i]; ok {
+					cnt = dupeCnt
+				}
+				hits.Logs = append(hits.Logs, term.asserts[0:cnt]...)
+				if shiftLeft(r.terms, i, cnt) < cnt {
 					r.hotMask.Clr(i)
 				}
 			}
@@ -174,36 +215,61 @@ func (r *InverseSet) Eval(clock int64) (hits Hits) {
 	return
 }
 
-func (r *InverseSet) checkReset(clock int64) (int64, uint8) {
+type anchorT struct {
+	clock  int64
+	term   int
+	offset int
+}
+
+func (a anchorT) ValidTerm() bool {
+	return a.term >= 0
+}
+
+func (r *InverseSet) checkReset(clock int64) anchorT {
 
 	var (
-		nTerms = len(r.terms)
-		stamps = make([]int64, nTerms) // 'stamps'  escapes;  annoying.
+		nTerms  = len(r.terms)
+		anchors = make([]anchorT, 0, nTerms) //nTerms not right when dupes is used.
 	)
+
+	// Gather timestamps from match
 	for i, term := range r.terms {
-		stamps[i] = term.asserts[0].Timestamp
+		cnt := 1
+		if dupeCnt, ok := r.dupeMap[i]; ok {
+			cnt = dupeCnt
+		}
+		for j := range cnt {
+			anchors = append(anchors, anchorT{
+				clock:  term.asserts[j].Timestamp,
+				term:   i,
+				offset: j,
+			})
+		}
 	}
 
-	// Sort the stamps so that the anchors are relative to the sorted sequence.
+	// Sort the anchors so that the anchors are relative to the sorted sequence.
 	// If we do not sort, the anchor is relative to the original term, which
 	// may be desirable, but is not the usual intent for an anchor.
-	slices.Sort(stamps)
+	slices.SortFunc(anchors, func(a, b anchorT) int {
+		return cmp.Compare(a.clock, b.clock)
+	})
+
+	// Filter the anchor list to just stamps
+	// About 20 extra nanoseconds and an extra allocation.
+	stamps := make([]int64, len(anchors))
+	for i, anchor := range anchors {
+		stamps[i] = anchor.clock
+	}
 
 	// Iterate across the resets; determine if we have a negative match.
-	for i, reset := range r.resets {
+	for _, reset := range r.resets {
 		start, stop := reset.calcWindow(stamps)
 
 		// Check if we have a negative term in the reset window.
 		// TODO: Binary search?
-		for _, ts := range r.resets[i].resets {
+		for _, ts := range reset.resets {
 			if ts >= start && ts <= stop {
-				// Map the anchor back to the original term
-				for i, term := range r.terms {
-					if stamps[reset.anchor] == term.asserts[0].Timestamp {
-						return 0, uint8(i)
-					}
-				}
-				return 0, reset.anchor // should never get here
+				return anchors[reset.anchor]
 			}
 		}
 
@@ -211,12 +277,18 @@ func (r *InverseSet) checkReset(clock int64) (int64, uint8) {
 		// We must wait until the reset window is in the past due to events with
 		// duplicate timestamps.  Thus must wait until one tick past the reset window.
 		if stop >= clock {
-			return stop - clock + 1, math.MaxUint8
+			return anchorT{
+				term:  -1,
+				clock: stop - clock + 1,
+			}
 		}
 	}
 
-	return 0, math.MaxUint8
+	return anchorT{term: -1}
 }
+
+// Assumes we are hot; determine the start, stop time of the match.
+// Return the anchor term as well.
 
 func (r *InverseSet) frameMatch() (int, int64, int64) {
 
@@ -226,15 +298,40 @@ func (r *InverseSet) frameMatch() (int, int64, int64) {
 		tStop     int64
 	)
 
-	// O(n) on terms
-	for i, term := range r.terms {
-		stamp := term.asserts[0].Timestamp
-		if stamp < tStart {
-			tStart = stamp
-			minAnchor = i
+	// Fast path no dupes
+	if len(r.dupeMap) == 0 {
+		// O(n) on terms
+		for i, term := range r.terms {
+			stamp := term.asserts[0].Timestamp
+			if stamp < tStart {
+				tStart = stamp
+				minAnchor = i
+			}
+			if stamp > tStop {
+				tStop = stamp
+			}
 		}
-		if stamp > tStop {
-			tStop = stamp
+
+	} else {
+		// O(n) on terms
+		for i, term := range r.terms {
+
+			cnt := 1
+			if dupeCnt, ok := r.dupeMap[i]; ok {
+				cnt = dupeCnt
+			}
+
+			// Find the minimum timestamp of the term
+			for j := range cnt {
+				stamp := term.asserts[j].Timestamp
+				if stamp < tStart {
+					tStart = stamp
+					minAnchor = i
+				}
+				if stamp > tStop {
+					tStop = stamp
+				}
+			}
 		}
 	}
 
@@ -256,7 +353,7 @@ func (r *InverseSet) GarbageCollect(clock int64) {
 	// Special case;
 	// If all the terms are hot and we have resets,
 	// allow the GC to be handled on the next evaluation.
-	// Otherwise, we may GC an valid single term prematurely.
+	// Otherwise, we may GC a valid single term prematurely.
 	if len(r.resets) > 0 && r.hotMask.FirstN(len(r.terms)) {
 		r.gcMark = disableGC
 		return
