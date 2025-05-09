@@ -11,7 +11,10 @@ var (
 	ErrAnchorRange  = errors.New("anchor out of range")
 )
 
-var capThreshold = 4
+const (
+	maxTerms     = 64
+	capThreshold = 4
+)
 
 type ResetT struct {
 	Term     TermT // Inverse term

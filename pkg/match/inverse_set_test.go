@@ -1,6 +1,7 @@
 package match
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -808,6 +809,49 @@ func TestSetInverseBadAnchor(t *testing.T) {
 	_, err := NewInverseSet(window, makeTermsA("alpha", "beta"), resets)
 	if err != ErrAnchorRange {
 		t.Fatalf("Expected err == ErrAnchorRange, got %v", err)
+	}
+}
+
+func TestSetInverseEmptyTerm(t *testing.T) {
+	term := TermT{Type: TermRaw, Value: ""}
+	_, err := NewInverseSet(10, []TermT{term}, nil)
+	if err != ErrTermEmpty {
+		t.Fatalf("Expected err == ErrTermEmpty, got %v", err)
+	}
+}
+
+func TestSetInverseEmptyResetTerm(t *testing.T) {
+	term := TermT{Type: TermRaw, Value: "ok"}
+	resetTerm := ResetT{Term: TermT{Type: TermRaw, Value: ""}}
+	_, err := NewInverseSet(10, []TermT{term}, []ResetT{resetTerm})
+	if err != ErrTermEmpty {
+		t.Fatalf("Expected err == ErrTermEmpty, got %v", err)
+	}
+}
+
+func TestSetInverseNoTerms(t *testing.T) {
+	_, err := NewInverseSet(10, nil, nil)
+	if err != ErrNoTerms {
+		t.Fatalf("Expected err == ErrNoTerms, got %v", err)
+	}
+}
+
+func TestSetInverseTooManyTerms(t *testing.T) {
+
+	terms := make([]TermT, maxTerms)
+	for i := range maxTerms {
+		terms[i] = makeRaw(fmt.Sprintf("term %d", i))
+	}
+	_, err := NewInverseSet(10, terms, nil)
+	if err != nil {
+		t.Fatalf("Expected err == nil, got %v", err)
+	}
+
+	terms = append(terms, makeRaw("one too many"))
+
+	_, err = NewInverseSet(10, terms, nil)
+	if err != ErrTooManyTerms {
+		t.Fatalf("Expected err == ErrTooManyTerms, got %v", err)
 	}
 }
 

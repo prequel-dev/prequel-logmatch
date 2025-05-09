@@ -24,17 +24,17 @@ func NewInverseSeq(window int64, seqTerms []TermT, resetTerms []ResetT) (*Invers
 
 	var (
 		resets   []resetT
-		terms    = make([]termT, 0, len(seqTerms))
-		dupes    = make(map[TermT]int, len(seqTerms))
+		nTerms   = len(seqTerms)
+		terms    = make([]termT, 0, nTerms)
+		dupes    = make(map[TermT]int, nTerms)
 		dupeMask bitMaskT
 	)
 
-	if len(seqTerms) == 0 {
-		return nil, ErrNoTerms
-	}
-
-	if len(seqTerms) > 64 {
+	switch {
+	case nTerms > maxTerms:
 		return nil, ErrTooManyTerms
+	case nTerms == 0:
+		return nil, ErrNoTerms
 	}
 
 	// Calculate dupes

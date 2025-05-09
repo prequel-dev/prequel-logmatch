@@ -27,7 +27,7 @@ func NewMatchSet(window int64, setTerms ...TermT) (*MatchSet, error) {
 	)
 
 	switch {
-	case nTerms > 64:
+	case nTerms > maxTerms:
 		return nil, ErrTooManyTerms
 	case nTerms == 0:
 		return nil, ErrNoTerms

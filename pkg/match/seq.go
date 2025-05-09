@@ -33,12 +33,11 @@ func NewMatchSeq(window int64, terms ...TermT) (*MatchSeq, error) {
 		dupeMask bitMaskT
 	)
 
-	if len(terms) == 0 {
-		return nil, ErrNoTerms
-	}
-
-	if len(terms) > 64 {
+	switch {
+	case nTerms > maxTerms:
 		return nil, ErrTooManyTerms
+	case nTerms == 0:
+		return nil, ErrNoTerms
 	}
 
 	// Calculate dupes

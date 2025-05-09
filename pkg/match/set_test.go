@@ -1,6 +1,7 @@
 package match
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/prequel-dev/prequel-logmatch/pkg/entry"
@@ -146,6 +147,20 @@ func TestSet(t *testing.T) {
 			},
 		},
 
+		"DupesWithOtherTermsAndExtras": {
+			// -1---3-------------
+			// ---2---------------
+			// Dupe terms are tolerated.
+			window: 5,
+			terms:  []string{"alpha", "alpha", "beta"},
+			steps: []step{
+				{line: "alpha"},
+				{line: "alpha"},
+				{line: "alpha"},
+				{line: "beta", cb: matchStamps(1, 2, 4)},
+			},
+		},
+
 		"DupesObeyWindow": {
 			// -1---3-------------
 			// ---2---------------
@@ -204,5 +219,39 @@ func TestSet(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSetNoTerms(t *testing.T) {
+	_, err := NewMatchSet(10)
+	if err != ErrNoTerms {
+		t.Fatalf("Expected err == ErrNoTerms, got %v", err)
+	}
+}
+
+func TestSetTooManyTerms(t *testing.T) {
+
+	terms := make([]TermT, maxTerms)
+	for i := range maxTerms {
+		terms[i] = makeRaw(fmt.Sprintf("term %d", i))
+	}
+	_, err := NewMatchSet(10, terms...)
+	if err != nil {
+		t.Fatalf("Expected err == nil, got %v", err)
+	}
+
+	terms = append(terms, makeRaw("one too many"))
+
+	_, err = NewMatchSet(10, terms...)
+	if err != ErrTooManyTerms {
+		t.Fatalf("Expected err == ErrTooManyTerms, got %v", err)
+	}
+}
+
+func TestSetEmptyTerm(t *testing.T) {
+	term := TermT{Type: TermRaw, Value: ""}
+	_, err := NewMatchSet(10, term)
+	if err != ErrTermEmpty {
+		t.Fatalf("Expected err == ErrTermEmpty, got %v", err)
 	}
 }

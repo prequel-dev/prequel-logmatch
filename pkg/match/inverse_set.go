@@ -32,7 +32,7 @@ func NewInverseSet(window int64, setTerms []TermT, resetTerms []ResetT) (*Invers
 	)
 
 	switch {
-	case nTerms > 64:
+	case nTerms > maxTerms:
 		return nil, ErrTooManyTerms
 	case nTerms == 0:
 		return nil, ErrNoTerms
