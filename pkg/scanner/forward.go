@@ -15,7 +15,7 @@ func ScanForward(rdr io.Reader, parseF ParseFuncT, scanF ScanFuncT, opts ...Scan
 		scanner = bufio.NewScanner(rdr)
 	)
 
-	if o.maxSz == MaxRecordSize {
+	if o.maxSz == pool.MaxRecordSize {
 		ptr := pool.PoolAlloc()
 		defer pool.PoolFree(ptr)
 		buf = *ptr

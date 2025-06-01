@@ -9,6 +9,8 @@ import (
 	"github.com/prequel-dev/prequel-logmatch/internal/pkg/pool"
 )
 
+const defaultLineSize = 2048
+
 type TimeFormatCbT func(m []byte) (int64, error)
 
 type regexFmtT struct {
@@ -73,17 +75,19 @@ func (f *regexFmtT) ReadTimestamp(rdr io.Reader) (ts int64, err error) {
 
 	var (
 		scanner = bufio.NewScanner(rdr)
+		buffer  = make([]byte, defaultLineSize)
 	)
 
-	ptr := pool.PoolAlloc()
-	defer pool.PoolFree(ptr)
-	buf := *ptr
-
-	scanner.Buffer(buf, pool.MaxRecordSize)
+	// Avoid using the pool buffer with scanner.Buffer.
+	// When a pool buffer is set on the scanner, the buffer's full capacity
+	// is used, not its size.  This causes the scanner to do a read of pool.MaxRecordSize
+	// bytes, which is typically excessive for a single record read.
+	// To avoid the allocation, we can consider a smaller memory pool at some point,
+	// or find an alternative to bufio.Scanner that has more buffer control.
+	scanner.Buffer(buffer, pool.MaxRecordSize)
 
 	// Scanner will bail with bufio.ErrTooLong
-	// if it encounters a line that is > o.maxSz.
-
+	// if it encounters a line that is > pool.MaxRecordSize.
 	if scanner.Scan() {
 		m := f.expTime.FindSubmatch(scanner.Bytes())
 		if len(m) <= 1 {
