@@ -37,18 +37,26 @@ const (
 	TermJqYaml
 )
 
+const (
+	termNameRaw     = "raw"
+	termNameRegex   = "regex"
+	termNameJqJson  = "jqJson"
+	termNameJqYaml  = "jqYaml"
+	termNameUnknown = "unknown"
+)
+
 func (t TermTypeT) String() string {
 	switch t {
 	case TermRaw:
-		return "raw"
+		return termNameRaw
 	case TermJqJson:
-		return "jqJson"
+		return termNameJqJson
 	case TermJqYaml:
-		return "jqYaml"
+		return termNameJqYaml
 	case TermRegex:
-		return "regex"
+		return termNameRegex
 	default:
-		return "unknown"
+		return termNameUnknown
 	}
 }
 
@@ -82,42 +90,6 @@ func (tt TermT) NewMatcher() (m MatchFunc, err error) {
 	}
 
 	return
-}
-
-type Hits struct {
-	Cnt  int
-	Logs []LogEntry
-}
-
-func (h *Hits) PopFront() []LogEntry {
-	if h.Cnt <= 0 {
-		return nil
-	}
-
-	var (
-		sz   = len(h.Logs) / h.Cnt
-		logs = h.Logs[:sz]
-	)
-
-	h.Cnt -= 1
-	h.Logs = h.Logs[sz:]
-	return logs
-}
-
-func (h Hits) Last() []LogEntry {
-	return h.Index(h.Cnt - 1)
-}
-
-func (h Hits) Index(i int) []LogEntry {
-	if i >= h.Cnt {
-		return nil
-	}
-	var (
-		nLogs = len(h.Logs)
-		sz    = nLogs / h.Cnt
-		off   = i * sz
-	)
-	return h.Logs[off : off+sz]
 }
 
 func IsRegex(v string) bool {
@@ -186,12 +158,12 @@ func NewJqJson(term string) (MatchFunc, error) {
 
 	query, err := gojq.Parse(term)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: parse fail: %w", ErrTermCompile, err)
 	}
 
 	code, err := gojq.Compile(query)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: compile fail: %w", ErrTermCompile, err)
 	}
 
 	return _makeJqMatch(term, code, unmarshal), nil
@@ -252,7 +224,7 @@ func _makeJqMatch(term string, code *gojq.Code, unmarshal unmarshalFuncT) MatchF
 				log.Debug().Err(err).
 					Str("line", line).
 					Str("term", term).
-					Msg("Fail jq query on JSON log line")
+					Msg("Fail jq query on JSON line")
 				match = false
 				break
 			}

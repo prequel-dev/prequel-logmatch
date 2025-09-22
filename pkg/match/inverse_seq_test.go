@@ -4,53 +4,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/prequel-dev/prequel-logmatch/pkg/entry"
 	"github.com/rs/zerolog"
 )
 
-//********
-// --A--B--C-----
-// -----------D--
-
-// Should fire *ONLY* {A,D},
-// not {A,D}, {B,D}, {C,D}
-
-func TestSeqInverseBadReset(t *testing.T) {
-	var (
-		window int64 = 10
-
-		resets = []ResetT{
-			{
-				Term:   makeRaw("Shutdown initiated"),
-				Anchor: 11, // Bad anchor
-			},
-		}
-	)
-
-	_, err := NewInverseSeq(window, makeTermsA("alpha", "beta"), resets)
-	if err != ErrAnchorRange {
-		t.Fatalf("Expected err == ErrAnchorRange, got %v", err)
-	}
-}
-
-func TestSeqInverse(t *testing.T) {
-	type step = stepT[InverseSeq]
-
-	var tests = map[string]struct {
-		clock  int64
-		window int64
-		terms  []string
-		reset  []ResetT
-		steps  []step
-	}{
-		"SingleTerm": {
-			// -A---------------- alpha
-			window: 10,
-			terms:  []string{"alpha"},
-			steps: []step{
-				{line: "alpha", cb: matchStamps(1)},
-			},
-		},
+func NewCasesSeqResets() casesT {
+	return casesT{
 
 		"SingleTermResetHit": {
 			// -A---------------- alpha
@@ -62,7 +20,7 @@ func TestSeqInverse(t *testing.T) {
 					Term:   makeRaw("reset"),
 				},
 			},
-			steps: []step{
+			steps: []stepT{
 				{line: "alpha"},
 				{line: "NOOP", stamp: 10},                      // fire slightly early
 				{line: "reset", stamp: 12, cb: matchStamps(1)}, // Fire reset late
@@ -79,7 +37,7 @@ func TestSeqInverse(t *testing.T) {
 					Term:   makeRaw("reset"),
 				},
 			},
-			steps: []step{
+			steps: []stepT{
 				{line: "alpha"},
 				{line: "reset", stamp: 11},
 				{line: "NOOP", stamp: 1000},
@@ -95,23 +53,9 @@ func TestSeqInverse(t *testing.T) {
 			reset: []ResetT{{
 				Term: makeRaw("reset"),
 			}}, // Simple relative reset
-			steps: []step{
+			steps: []stepT{
 				{line: "alpha", stamp: 1},
 				{line: "reset", stamp: 1},
-			},
-		},
-
-		"DupeTimestamps": {
-			// -A----------------
-			// -B----------------
-			// -C----------------
-			// Dupe timestamps are tolerated; not enforcing strict ordering.
-			window: 5,
-			terms:  []string{"alpha", "beta", "gamma"},
-			steps: []step{
-				{line: "alpha", stamp: 1},
-				{line: "beta", stamp: 1},
-				{line: "gamma", stamp: 1, cb: matchStamps(1, 1, 1)},
 			},
 		},
 
@@ -125,7 +69,7 @@ func TestSeqInverse(t *testing.T) {
 			reset: []ResetT{{
 				Term: makeRaw("reset"),
 			}}, // Simple relative reset
-			steps: []step{
+			steps: []stepT{
 				{line: "alpha", stamp: 1},
 				{line: "beta", stamp: 2},
 				{line: "reset", stamp: 2},
@@ -145,7 +89,7 @@ func TestSeqInverse(t *testing.T) {
 					Absolute: true,
 				},
 			},
-			steps: []step{
+			steps: []stepT{
 				{line: "alpha", stamp: 1},
 				{line: "beta", stamp: 1 + 10},                             // alpha stamp + window + 1
 				{line: "NOOP", stamp: 1 + 50},                             // still in absolute reset window},
@@ -166,7 +110,7 @@ func TestSeqInverse(t *testing.T) {
 					Absolute: true,
 				},
 			},
-			steps: []step{
+			steps: []stepT{
 				{line: "alpha"},
 				{line: "beta"},
 				{line: "NOOP", stamp: 10000, cb: matchStamps(1, 2)}, // way out of reset window
@@ -186,23 +130,10 @@ func TestSeqInverse(t *testing.T) {
 					Absolute: true,
 				},
 			},
-			steps: []step{
+			steps: []stepT{
 				{line: "alpha", stamp: 1},
 				{line: "beta", stamp: 1 + 10 + 1}, // out of the window
 				{line: "NOOP", stamp: 10000},      // way out of reset window
-			},
-		},
-
-		"OverFire": {
-			// --A--B--C-----
-			// -----------D--
-			window: 10,
-			terms:  []string{"alpha", "beta"},
-			steps: []step{
-				{line: "alpha"},
-				{line: "alpha"},
-				{line: "alpha"},
-				{line: "beta", cb: matchStamps(1, 4)},
 			},
 		},
 
@@ -222,7 +153,7 @@ func TestSeqInverse(t *testing.T) {
 					Absolute: true,
 				},
 			},
-			steps: []step{
+			steps: []stepT{
 				{line: "reset"},
 				{line: "alpha", stamp: 6}, // reset window [1,21], no fire
 				{line: "alpha"},           // reset window [2,22], should fire after 22
@@ -248,7 +179,7 @@ func TestSeqInverse(t *testing.T) {
 					Absolute: true,
 				},
 			},
-			steps: []step{
+			steps: []stepT{
 				{line: "alpha"},            // reset window [6,26], no fire
 				{line: "alpha", stamp: 22}, // reset window [27,47], should fire after 47
 				{line: "reset"},            // reset ignored because abs window is slide right
@@ -275,7 +206,7 @@ func TestSeqInverse(t *testing.T) {
 					Window: 10,
 				},
 			},
-			steps: []step{
+			steps: []stepT{
 				{line: "alpha"},
 				{line: "beta"},
 				{line: "gamma"},                // should fire but delay on on reset window [1,13]
@@ -298,7 +229,7 @@ func TestSeqInverse(t *testing.T) {
 					Anchor:   1,
 				},
 			},
-			steps: []step{
+			steps: []stepT{
 				{line: "alpha"},
 				{line: "beta", stamp: 1 + 3}, //  clock + window, reset window [4, 14]
 				{line: "noop", stamp: 14},    // no fire until after window
@@ -324,7 +255,7 @@ func TestSeqInverse(t *testing.T) {
 					Slide:    -5,
 				},
 			},
-			steps: []step{
+			steps: []stepT{
 				{line: "alpha"},
 				{line: "reset"},
 				{line: "beta"},
@@ -346,7 +277,7 @@ func TestSeqInverse(t *testing.T) {
 				{Term: makeRaw("reset1")},
 				{Term: makeRaw("reset2")},
 			},
-			steps: []step{
+			steps: []stepT{
 				{line: "alpha"},
 				{line: "beta"}, // Should match, but cannot fire until next event due to reset
 				{line: "alpha", cb: matchStamps(1, 2)},
@@ -375,7 +306,7 @@ func TestSeqInverse(t *testing.T) {
 					Absolute: true,
 				},
 			},
-			steps: []step{
+			steps: []stepT{
 				{line: "alpha"},
 				{line: "beta", stamp: 1 + 50},                      // clock + window, reset1 [1, 51], reset2 [1, 51], reset3 [1, 101]
 				{line: "NOOP", stamp: 101},                         // no fire until after window
@@ -395,7 +326,7 @@ func TestSeqInverse(t *testing.T) {
 					Absolute: true,
 				},
 			},
-			steps: []step{
+			steps: []stepT{
 				{line: "alpha"},
 				{line: "beta", stamp: 1 + 50}, // clock + window, reset1 [1, 51], reset2 [1, 51], reset3 [1, 101]
 				{line: "reset3", stamp: 101},  // reset at edge of window
@@ -413,12 +344,12 @@ func TestSeqInverse(t *testing.T) {
 					Absolute: true,
 				},
 			},
-			steps: []step{
+			steps: []stepT{
 				{line: "alpha"},
 				{line: "beta"},
 				{line: "gamma"}, // Cannot fire until after reset window
-				{postF: checkEval[*InverseSeq](21, checkNoFire)},
-				{postF: checkEval[*InverseSeq](22, matchStamps(1, 2))},
+				{postF: checkEval(21, checkNoFire)},
+				{postF: checkEval(22, matchStamps(1, 2))},
 			},
 		},
 
@@ -434,40 +365,12 @@ func TestSeqInverse(t *testing.T) {
 					Window:   5,
 				},
 			},
-			steps: []step{
+			steps: []stepT{
 				{line: "alpha"},
 				{line: "beta"}, // reset1: [1,2] reset2: [1,2] reset3: [1,7]; cannot fire until after reset3
 				{line: "noop", stamp: 7},
 				{line: "noop", stamp: 8, cb: matchStamps(1, 2)},
 				{line: "noop", stamp: 1000},
-			},
-		},
-
-		"Dupes": {
-			// --1----3--4-5-6-----
-			// --1----3--4-5-6-----
-			// --1----3--4 5-6-----
-			// ----2-----------7--8
-			// Because we are using a duplicate term, there is a possibility
-			// of overlapping fire events.  This test should ensure that
-			// the sequence matcher is able to handle this case.
-			// Above should fire {1,3,4,7} and {3,4,5,8}
-			window: 10,
-			terms: []string{
-				"alpha",
-				"alpha",
-				"alpha",
-				"beta",
-			},
-			steps: []step{
-				{line: "alpha"},
-				{line: "beta"},
-				{line: "alpha"},
-				{line: "alpha"},
-				{line: "alpha"},
-				{line: "alpha"},
-				{line: "beta", cb: matchStamps(1, 3, 4, 7)},
-				{line: "beta", cb: matchStamps(3, 4, 5, 8)},
 			},
 		},
 
@@ -490,7 +393,7 @@ func TestSeqInverse(t *testing.T) {
 					Absolute: true,
 				},
 			},
-			steps: []step{
+			steps: []stepT{
 				{line: "alpha"},
 				{line: "alpha"},
 				{line: "alpha"},
@@ -521,7 +424,7 @@ func TestSeqInverse(t *testing.T) {
 					Absolute: true,
 				},
 			},
-			steps: []step{
+			steps: []stepT{
 				{line: "alpha"},
 				{line: "alpha"},
 				{line: "alpha"},
@@ -532,28 +435,35 @@ func TestSeqInverse(t *testing.T) {
 			},
 		},
 
-		"GCOldTerms": {
-			// -1------4--------------10----------
-			// ---2--3----------8---9-----11----
-			// ----------5--6-7---------------12-
-			// Should fire {1,2,5}, {4,8,12}
-			window: 50,
-			terms:  []string{"alpha", "beta", "gamma"},
-			steps: []step{
-				{line: "alpha"},
-				{line: "beta"},
-				{line: "beta"},
-				{line: "alpha"},
-				{line: "gamma", cb: matchStamps(1, 2, 5)},
-				{line: "gamma"},
-				{line: "gamma"},
-				{line: "beta"},
-				{line: "beta"},
-				{line: "alpha"},
-				{line: "beta"},
-				{line: "gamma", cb: matchStamps(4, 8, 12)},
-				{postF: garbageCollect[*InverseSeq](12 + 50 + 1)}, // clock + window + 1
-				{postF: checkActive[InverseSeq](0)},
+		"DupesWithResetMissOnAnchor": {
+			// -123--------- alpha
+			// -123--------- alpha
+			// -123--------- alpha
+			// ----4-----6-- beta
+			// ---------5--- reset
+			window: 10,
+			terms: []string{
+				"alpha",
+				"alpha",
+				"alpha",
+				"beta",
+			},
+			reset: []ResetT{
+				{
+					Term:     makeRaw("reset"),
+					Window:   20,
+					Anchor:   2,
+					Absolute: true,
+				},
+			},
+			steps: []stepT{
+				{line: "alpha1"},
+				{line: "alpha2"},
+				{line: "alpha3"},
+				{line: "beta1"},
+				{line: "reset", stamp: 21},
+				{line: "beta2", stamp: 22},
+				{line: "noop", stamp: 1000},
 			},
 		},
 
@@ -561,11 +471,11 @@ func TestSeqInverse(t *testing.T) {
 			window: 10,
 			terms:  []string{"alpha", "beta", "gamma"},
 			reset:  []ResetT{{Term: makeRaw("reset")}},
-			steps: []step{
+			steps: []stepT{
 				{line: "reset"},
 				{line: "reset"},
 				{line: "reset"},
-				{postF: checkResets[InverseSeq](0, 0)},
+				{postF: checkResets(0, 0)},
 			},
 		},
 
@@ -579,210 +489,181 @@ func TestSeqInverse(t *testing.T) {
 					Window: 20,
 				},
 			},
-			steps: []step{
+			steps: []stepT{
 				{line: "reset"},
 				{line: "reset"},
-				{line: "reset", postF: checkResets[InverseSeq](0, 3)},                    // Reset terms with nothing hot w/o lookback have been optimized out.
-				{line: "NOOP", stamp: 1 + 50 + 20, postF: checkResets[InverseSeq](0, 3)}, // Emit noop at full GC window (see calcGCWindow)}, should have some negative terms
-				{line: "NOOP", postF: checkResets[InverseSeq](0, 3)},                     // Must be past window to GC (TODO: validate this)
-				{line: "NOOP", postF: checkResets[InverseSeq](0, 2)},                     // Emit noop right after window, should have peeled off one term
-				{line: "NOOP", postF: checkResets[InverseSeq](0, 1)},                     // Emit noop right after window, should have peeled off one term
-				{line: "NOOP", postF: checkResets[InverseSeq](0, 0)},                     // Emit noop right after window, should have peeled off one term
-				{postF: checkGCMark[InverseSeq](disableGC)},
+				{line: "reset", postF: checkResets(0, 3)},                    // Reset terms with nothing hot w/o lookback have been optimized out.
+				{line: "NOOP", stamp: 1 + 50 + 20, postF: checkResets(0, 3)}, // Emit noop at full GC window (see calcGCWindow)}, should have some negative terms
+				{line: "NOOP", postF: checkResets(0, 2)},                     // Emit noop right after window, should have peeled off one term
+				{line: "NOOP", postF: checkResets(0, 1)},                     // Emit noop right after window, should have peeled off one term
+				{line: "NOOP", postF: checkResets(0, 0)},                     // Emit noop right after window, should have peeled off one term
+				{postF: checkGCMark(disableGC)},
 			},
 		},
 
-		"IgnoreOutOfOrder": {
-			// -2------ alpha
-			// --1----- beta
-			window: 10,
+		"SimpleResetWindow": {
+			window: 2,
 			terms:  []string{"alpha", "beta"},
-			steps: []step{
-				{line: "beta", stamp: 2},
-				{line: "alpha", stamp: 1},
+			reset: []ResetT{
+				{
+					Term: makeRaw("reset"),
+				},
+			},
+			steps: []stepT{
+				{line: "alpha"},
+				{line: "reset", stamp: 1},
+				{line: "NOOP", stamp: 3, postF: checkResets(0, 1)},
+				{line: "NOOP", stamp: 4, postF: checkResets(0, 0)},
 			},
 		},
 
-		"FireMultiplesProperlyWithWindow": {
-			// -123------------------------ alpha
-			// --23------------------------ beta
-			// ---3------------------------ gamma
-			// -------4-------------------- delta
-			window: 3,
-			terms:  []string{"dupe", "dupe", "dupe", "fire"},
-			steps: []step{
-				{line: "dupe"}, //window [1,4]
-				{line: "dupe"},
-				{line: "dupe"},
-				{line: "fire", stamp: 6}, // Should not fire  cause out of window.
-			},
-		},
-
-		"FireMultiplesProperlyWithWindowMiss": {
-			// -12345------------ dupe
-			// --2345------------ dupe
-			// ---345------------ dupe
-			// ----------8------- fire
-			window: 4,
-			terms:  []string{"dupe", "dupe", "dupe", "fire"},
-			steps: []step{
-				{line: "dupe"}, //window [1,5]
-				{line: "dupe"}, //window [2,6]
-				{line: "dupe"}, //window [3,7]
-				{line: "dupe"},
-				{line: "dupe"},
-				{line: "fire", stamp: 8}, // Should not fire  cause out of window.
-			},
-		},
-
-		"FireMultiplesProperlyWithWindowHit": {
-			// -1234567----------- dupe
-			// --234567----------- dupe
-			// ---34567----------- dupe
-			// --------8---------- fire
-			// Should fire {5,6,7,8}
-			window: 3,
-			terms:  []string{"dupe", "dupe", "dupe", "fire"},
-			steps: []step{
-				{line: "dupe1"},
-				{line: "dupe2"},
-				{line: "dupe3"},
-				{line: "dupe4"},
-				{line: "dupe5"},
-				{line: "dupe6"},
-				{line: "dupe7"},
-				{line: "fire", stamp: 8, cb: matchLines("dupe5", "dupe6", "dupe7", "fire")},
-			},
-		},
-
-		"FireMultiplesProperlyWithWindowHitSameTimestamp": {
-			// -1234567----------- dupe
-			// --234567----------- dupe
-			// ---34567----------- dupe
-			// --------89---------- fire
-			// Should fire {1,2,3,8},{2,3,4,9} due to same timestamp
-			window: 3,
-			terms:  []string{"dupe", "dupe", "dupe", "fire"},
-			steps: []step{
-				{line: "dupe1", stamp: 1},
-				{line: "dupe2", stamp: 1},
-				{line: "dupe3", stamp: 1},
-				{line: "dupe4", stamp: 1},
-				{line: "dupe5", stamp: 1},
-				{line: "dupe6", stamp: 1},
-				{line: "dupe7", stamp: 1},
-				{line: "fire1", stamp: 1, cb: matchLines("dupe1", "dupe2", "dupe3", "fire1")},
-				{line: "fire2", stamp: 2, cb: matchLines("dupe2", "dupe3", "dupe4", "fire2")},
-			},
-		},
-
-		"FireDisjointMultiples": {
-			// -12-456-89---------- dupe
-			// --2-456-89---------- dupe
-			// ---3---7------------ disjoint
-			// ----456-89---------- dupe
-			// ----456-89---------- dupe
-			// ----------A--------- fire
-			// Should fire {5,6,7,8,9,A}
+		"ResetDupesWithAnchorFire": {
 			window: 5,
-			terms:  []string{"dupe", "dupe", "disjoint", "dupe", "dupe", "fire"},
-			steps: []step{
-				{line: "1_dupe"},
-				{line: "2_dupe"},
-				{line: "3_disjoint"},
-				{line: "4_dupe"},
-				{line: "5_dupe"},
-				{line: "6_dupe"},
-				{line: "7_disjoint"},
-				{line: "8_dupe"},
-				{line: "9_dupe"},
-				{line: "A_fire", cb: matchLines("5_dupe", "6_dupe", "7_disjoint", "8_dupe", "9_dupe", "A_fire")},
+			terms:  []string{"alpha", "alpha", "alpha"},
+			reset: []ResetT{
+				{
+					Term:   makeRaw("reset"),
+					Anchor: 2,
+				},
+			},
+			steps: []stepT{
+				{line: "alpha1"},
+				{line: "alpha2"},
+				{line: "alpha3"},
+				{line: "nope4"}, // Shouldn't fire yet. Reset anchor is on line 2. So reset range is 3 + 3-1 == 5)
+				{line: "nope5"}, // Not yet my friend
+				{line: "nope6", cb: matchStamps(1, 2, 3)}, // Fire on stamp 6 >  reset window 2-5
+				{line: "alpha7"}, // Normally {2,3,7} would fire, but must wait for anchor at {7, 7+7-2==12}
+				{line: "alpha8"}, // Normally 3,7,8 would fire, but must wait for {3, 8+8-3==13}
+				{line: "alpha12", stamp: 13, cb: matchStamps(2, 3, 7)},
+				{line: "nope14", stamp: 14, cb: matchStamps(3, 7, 8)},
 			},
 		},
 
-		"FireDistinctMultiplesMiss": {
-			// --1234----- alpha
-			// ---234----- alpha
-			// ------56--- beta
-			// -------6--- beta
-			// ---------A- fire
-			// Should not fire; alpha line 2 is out of window.
-			window: 4,
-			terms:  []string{"alpha", "alpha", "beta", "beta", "fire"},
-			steps: []step{
-				{line: "1_alpha"},
-				{line: "2_alpha"},
-				{line: "3_alpha"},
-				{line: "4_alpha"},
-				{line: "5_beta"},
-				{line: "6_beta"},
-				{line: "8_fire", stamp: 8},
-			},
-		},
-
-		"FireDistinctMultiplesHit": {
-			// --12345----- alpha
-			// ---2345----- alpha
-			// -------678-- beta
-			// --------78-- beta
-			// ---------8-- fire
-			// Should fire {3,4,6,7,8}.
+		"ResetDupesWithAnchorMiss": {
 			window: 5,
-			terms:  []string{"alpha", "alpha", "beta", "beta", "fire"},
-			steps: []step{
-				{line: "1_alpha"},
-				{line: "2_alpha"},
-				{line: "3_alpha"},
-				{line: "4_alpha"},
-				{line: "5_alpha"},
-				{line: "6_beta"},
-				{line: "7_beta"},
-				{line: "8_beta"},
-				{line: "8_fire", stamp: 8, cb: matchLines("3_alpha", "4_alpha", "6_beta", "7_beta", "8_fire")},
+			terms:  []string{"alpha", "alpha", "alpha"},
+			reset: []ResetT{
+				{
+					Term:   makeRaw("reset"),
+					Anchor: 2,
+				},
+			},
+			steps: []stepT{
+				{line: "alpha1"},
+				{line: "alpha2"},
+				{line: "alpha3"},
+				{line: "nope4"},  // Shouldn't fire yet. Reset anchor is on line 2. So reset range is 3 + 3-1 == 5)
+				{line: "reset5"}, // Reset at stamp 5 will deny {1,2,3}
+				{line: "nope6"},  // No fire, but 2,3,7 still active
+				{line: "alpha7"}, // Normally {2,3,7} would fire, but must wait for anchor at {7, 7+7-2==12}
+				{line: "alpha8"}, // Normally 3,7,8 would fire, but must wait for {3, 8+8-3==13}
+				{line: "alpha12", stamp: 13, cb: matchStamps(2, 3, 7)},
+				{line: "nope14", stamp: 14, cb: matchStamps(3, 7, 8)},
 			},
 		},
 	}
+}
 
-	for name, tc := range tests {
+func TestInverseSeq(t *testing.T) {
+
+	cases := map[string]struct {
+		cases casesT
+	}{
+		"Single": {
+			cases: NewCasesSingle(),
+		},
+		"Simple": {
+			cases: NewCasesSeqSimple(),
+		},
+		"Dupes": {
+			cases: NewCasesSeqDupes(),
+		},
+		"Resets": {
+			cases: NewCasesSeqResets(),
+		},
+	}
+
+	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			sm, err := NewInverseSeq(tc.window, makeTerms(tc.terms), tc.reset)
-			if err != nil {
-				t.Fatalf("Expected err == nil, got %v", err)
-			}
 
-			clock := tc.clock
+			tc.cases.run(t, func(tc caseT) (Matcher, error) {
+				return NewInverseSeq(tc.window, makeTerms(tc.terms), tc.reset)
+			})
 
-			for idx, step := range tc.steps {
+		})
+	}
+}
 
-				clock += 1
-				stamp := clock
-				if step.stamp != 0 {
-					stamp = step.stamp
-					clock = stamp
-				}
+func TestInverseSeqInitFail(t *testing.T) {
 
-				if step.line != "" {
-					var (
-						entry = entry.LogEntry{Timestamp: stamp, Line: step.line}
-						hits  = sm.Scan(entry)
-					)
+	cases := map[string]struct {
+		err    error
+		window int64
+		terms  []TermT
+		reset  []ResetT
+	}{
+		"NoTerms": {
+			err:    ErrNoTerms,
+			window: 10,
+		},
 
-					if step.cb == nil {
-						checkNoFire(t, idx+1, hits)
-					} else {
-						step.cb(t, idx+1, hits)
-					}
-				}
+		"EmptyTerm": {
+			err:    ErrTermEmpty,
+			window: 10,
+			terms:  []TermT{{Type: TermRaw, Value: ""}},
+		},
 
-				if step.postF != nil {
-					step.postF(t, idx+1, sm)
-				}
+		"EmptyResetTerm": {
+			err:    ErrTermEmpty,
+			window: 10,
+			terms:  makeTermsA("ok"),
+			reset:  []ResetT{{Term: TermT{Type: TermRaw, Value: ""}}},
+		},
+
+		"BadAnchor": {
+			err: ErrAnchorRange,
+
+			window: 10,
+			terms:  makeTermsA("alpha", "beta"),
+			reset: []ResetT{
+				{
+					Term:   makeRaw("Shutdown initiated"),
+					Anchor: 11, // Bad anchor
+				},
+			},
+		},
+
+		"AlmostTooManyTerms": {
+			err:    nil,
+			window: 10,
+			terms:  makeTermsN(maxTerms),
+		},
+
+		"DupeShouldNotPushOverMax": {
+			err:    ErrTooManyTerms, // Not supported yet on InversetSeq
+			window: 10,
+			terms:  makeDupesN(maxTerms * 2),
+		},
+
+		"TooManyTerms": {
+			err:    ErrTooManyTerms,
+			window: 10,
+			terms:  makeTermsN(maxTerms + 1),
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := NewInverseSeq(tc.window, tc.terms, tc.reset)
+			if err != tc.err {
+				t.Fatalf("Expected err == %v, got %v", tc.err, err)
 			}
 		})
 	}
 }
 
-// --------------------
+// // --------------------
 
 func BenchmarkSeqInverseMisses(b *testing.B) {
 	sm, err := NewInverseSeq(int64(time.Second), makeTermsA("frank", "burns"), nil)
