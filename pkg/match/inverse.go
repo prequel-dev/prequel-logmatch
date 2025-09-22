@@ -38,6 +38,29 @@ type termT struct {
 	asserts []LogEntry
 }
 
+func (r resetT) calcWindowA(anchors []anchorT) (int64, int64) {
+	var (
+		width  = r.window
+		anchor = anchors[r.anchor].clock
+	)
+
+	// Slide the anchor if necessary
+	anchor += r.slide
+
+	// Determine the width of the window
+	if !r.absolute {
+		width += anchors[len(anchors)-1].clock - anchors[0].clock
+	}
+
+	if width <= 0 {
+		// Effectively disables the negative window
+		width = 0
+	}
+
+	// Calculate the start and stop times
+	return anchor, anchor + width
+}
+
 func (r resetT) calcWindow(stamps []int64) (int64, int64) {
 	var (
 		width  = r.window
@@ -89,11 +112,6 @@ func calcGCWindow(window int64, resets []resetT) (int64, int64) {
 			left = reset.slide
 		}
 	}
-	// Add tick to right because we will need to assert tick one past the reset window,
-	// to establish that no reset occurred as a duplicate timestamp event at the end of the reset window.
-	if len(resets) > 0 {
-		right += 1
-	}
 
 	return (-1 * left), right
 }
@@ -141,4 +159,14 @@ func shiftAnchor(terms []termT, drop anchorT) int {
 	m = slices.Delete(m, i, i+1)
 	terms[drop.term].asserts = m
 	return len(m)
+}
+
+type anchorT struct {
+	clock  int64
+	term   int
+	offset int
+}
+
+func (a anchorT) ValidTerm() bool {
+	return a.term >= 0
 }

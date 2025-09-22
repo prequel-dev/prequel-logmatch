@@ -23,54 +23,13 @@ type InverseSet struct {
 
 func NewInverseSet(window int64, setTerms []TermT, resetTerms []ResetT) (*InverseSet, error) {
 
-	var (
-		resets  []resetT
-		dupeMap map[int]int
-		nTerms  = len(setTerms)
-		dupes   = make(map[TermT]int, nTerms)
-		terms   = make([]termT, 0, nTerms)
-	)
-
-	switch {
-	case nTerms > maxTerms:
-		return nil, ErrTooManyTerms
-	case nTerms == 0:
-		return nil, ErrNoTerms
+	terms, dupeMap, err := buildSetTerms(setTerms...)
+	if err != nil {
+		return nil, err
 	}
 
-	// First pass to get term counts
-	for _, term := range setTerms {
-		dupes[term]++
-	}
-
-	// Iterate over the terms again to build the matcher list
-	for i, term := range setTerms {
-
-		cnt := dupes[term]
-
-		if cnt >= 1 {
-
-			m, err := term.NewMatcher()
-			if err != nil {
-				return nil, err
-			}
-
-			terms = append(terms, termT{matcher: m})
-
-			if cnt > 1 {
-
-				// We have a dupe; add it to the dupeMap
-				if dupeMap == nil {
-					dupeMap = make(map[int]int)
-				}
-				dupeMap[i] = cnt
-
-				// Delete term from the map to prevent adding it again
-				delete(dupes, term)
-			}
-		}
-	}
-
+	// Init reset terms
+	var resets []resetT
 	if len(resetTerms) > 0 {
 		resets = make([]resetT, 0, len(resetTerms))
 
@@ -79,7 +38,7 @@ func NewInverseSet(window int64, setTerms []TermT, resetTerms []ResetT) (*Invers
 			switch {
 			case err != nil:
 				return nil, err
-			case int(term.Anchor) >= len(setTerms):
+			case int(term.Anchor) >= len(setTerms): // This includes dupes.
 				return nil, ErrAnchorRange
 			}
 
@@ -92,6 +51,7 @@ func NewInverseSet(window int64, setTerms []TermT, resetTerms []ResetT) (*Invers
 			})
 		}
 	}
+	// Calculate GC windows
 	gcLeft, gcRight := calcGCWindow(window, resets)
 
 	return &InverseSet{
@@ -126,7 +86,7 @@ func (r *InverseSet) Scan(e entry.LogEntry) (hits Hits) {
 			r.terms[i].asserts = append(r.terms[i].asserts, e)
 
 			// If not a dupe or we've hit the dupe count, set the hot mask
-			if dupeCnt, ok := r.dupeMap[i]; !ok || len(r.terms[i].asserts) >= dupeCnt {
+			if dupeCnt := r.dupeMap[i]; len(r.terms[i].asserts) > dupeCnt {
 				r.hotMask.Set(i)
 			}
 
@@ -184,11 +144,11 @@ func (r *InverseSet) Eval(clock int64) (hits Hits) {
 		if drop.ValidTerm() {
 			// We have a negative match;
 			// remove the offending term assert and continue.
-			if dupeCnt := r.dupeMap[drop.term]; dupeCnt <= 0 {
+			if dupeCnt, ok := r.dupeMap[drop.term]; !ok {
 				if shiftLeft(r.terms, drop.term, 1) == 0 {
 					r.hotMask.Clr(drop.term)
 				}
-			} else if cnt := shiftAnchor(r.terms, drop); cnt < dupeCnt {
+			} else if cnt := shiftAnchor(r.terms, drop); cnt <= dupeCnt {
 				r.hotMask.Clr(drop.term)
 			}
 
@@ -200,10 +160,7 @@ func (r *InverseSet) Eval(clock int64) (hits Hits) {
 			}
 
 			for i, term := range r.terms {
-				cnt := 1
-				if dupeCnt, ok := r.dupeMap[i]; ok {
-					cnt = dupeCnt
-				}
+				cnt := r.dupeMap[i] + 1
 				hits.Logs = append(hits.Logs, term.asserts[0:cnt]...)
 				if shiftLeft(r.terms, i, cnt) < cnt {
 					r.hotMask.Clr(i)
@@ -215,29 +172,17 @@ func (r *InverseSet) Eval(clock int64) (hits Hits) {
 	return
 }
 
-type anchorT struct {
-	clock  int64
-	term   int
-	offset int
-}
-
-func (a anchorT) ValidTerm() bool {
-	return a.term >= 0
-}
-
 func (r *InverseSet) checkReset(clock int64) anchorT {
 
 	var (
 		nTerms  = len(r.terms)
-		anchors = make([]anchorT, 0, nTerms) //nTerms not right when dupes is used.
+		nDupes  = r.dupeMap[-1]
+		anchors = make([]anchorT, 0, nTerms+nDupes)
 	)
 
 	// Gather timestamps from match
 	for i, term := range r.terms {
-		cnt := 1
-		if dupeCnt, ok := r.dupeMap[i]; ok {
-			cnt = dupeCnt
-		}
+		cnt := r.dupeMap[i] + 1
 		for j := range cnt {
 			anchors = append(anchors, anchorT{
 				clock:  term.asserts[j].Timestamp,
@@ -254,16 +199,9 @@ func (r *InverseSet) checkReset(clock int64) anchorT {
 		return cmp.Compare(a.clock, b.clock)
 	})
 
-	// Filter the anchor list to just stamps
-	// About 20 extra nanoseconds and an extra allocation.
-	stamps := make([]int64, len(anchors))
-	for i, anchor := range anchors {
-		stamps[i] = anchor.clock
-	}
-
 	// Iterate across the resets; determine if we have a negative match.
 	for _, reset := range r.resets {
-		start, stop := reset.calcWindow(stamps)
+		start, stop := reset.calcWindowA(anchors)
 
 		// Check if we have a negative term in the reset window.
 		// TODO: Binary search?
@@ -299,7 +237,7 @@ func (r *InverseSet) frameMatch() (int, int64, int64) {
 	)
 
 	// Fast path no dupes
-	if len(r.dupeMap) == 0 {
+	if r.dupeMap == nil {
 		// O(n) on terms
 		for i, term := range r.terms {
 			stamp := term.asserts[0].Timestamp
@@ -316,10 +254,7 @@ func (r *InverseSet) frameMatch() (int, int64, int64) {
 		// O(n) on terms
 		for i, term := range r.terms {
 
-			cnt := 1
-			if dupeCnt, ok := r.dupeMap[i]; ok {
-				cnt = dupeCnt
-			}
+			cnt := r.dupeMap[i] + 1
 
 			// Find the minimum timestamp of the term
 			for j := range cnt {

@@ -18,52 +18,24 @@ import (
 // two events with the same timestamp when in real time they are sequential.
 
 type MatchSeq struct {
-	clock    int64
-	window   int64
-	nActive  int
-	dupeMask bitMaskT
-	terms    []termT
+	clock   int64
+	window  int64
+	nActive int
+	terms   []termT
+	dupeMap map[int]int
 }
 
-func NewMatchSeq(window int64, terms ...TermT) (*MatchSeq, error) {
-	var (
-		nTerms   = len(terms)
-		termL    = make([]termT, nTerms)
-		dupes    = make(map[TermT]int, nTerms)
-		dupeMask bitMaskT
-	)
+func NewMatchSeq(window int64, seqTerms ...TermT) (*MatchSeq, error) {
 
-	switch {
-	case nTerms > maxTerms:
-		return nil, ErrTooManyTerms
-	case nTerms == 0:
-		return nil, ErrNoTerms
-	}
-
-	// Calculate dupes
-	for _, term := range terms {
-		if v, ok := dupes[term]; ok {
-			dupes[term] = v + 1
-		} else {
-			dupes[term] = 1
-		}
-	}
-
-	for i, term := range terms {
-		if m, err := term.NewMatcher(); err != nil {
-			return nil, err
-		} else {
-			termL[i].matcher = m
-		}
-		if dupes[term] > 1 {
-			dupeMask.Set(i)
-		}
+	terms, dupeMap, err := buildSeqTerms(seqTerms...)
+	if err != nil {
+		return nil, err
 	}
 
 	return &MatchSeq{
-		window:   window,
-		terms:    termL,
-		dupeMask: dupeMask,
+		window:  window,
+		terms:   terms,
+		dupeMap: dupeMap,
 	}, nil
 }
 
@@ -92,26 +64,48 @@ func (r *MatchSeq) Scan(e LogEntry) (hits Hits) {
 		return
 	}
 
-	// We matched the active term
-	r.nActive += 1
+	// We have matched the active term; check if there are dupes before advancing.
+	dupeCnt := r.dupeMap[r.nActive]
 
-	if r.nActive < len(r.terms) {
-		// Not all terms are matched; append current for later.
-		r.terms[r.nActive-1].asserts = append(r.terms[r.nActive-1].asserts, e)
+	if len(r.terms[r.nActive].asserts) < dupeCnt {
+		// Not enough dupes yet; append current for later.
+		r.terms[r.nActive].asserts = append(r.terms[r.nActive].asserts, e)
+		return
+	}
+
+	// We matched the active term, but not the all terms yet.
+	// Advance the active term and append the current event.
+	if r.nActive+1 < len(r.terms) {
+		r.terms[r.nActive].asserts = append(r.terms[r.nActive].asserts, e)
+		r.nActive += 1
 		return
 	}
 
 	// We have a full frame; fire and prune.
 	hits.Cnt = 1
-	hits.Logs = make([]LogEntry, 0, len(r.terms))
+	hits.Logs = make([]LogEntry, 0, len(r.terms)+r.dupeMap[-1])
 
 	for i := range len(r.terms) - 1 {
-		hits.Logs = append(hits.Logs, r.terms[i].asserts[0])
+		hitCnt := r.dupeMap[i] + 1
+		hits.Logs = append(hits.Logs, r.terms[i].asserts[:hitCnt]...)
+
+		// Only remove the first item; leave remaining dupes for next match.
 		shiftLeft(r.terms, i, 1)
+	}
+
+	// Append any dupes for the final term
+	if dupeCnt > 0 {
+		hits.Logs = append(hits.Logs, r.terms[r.nActive].asserts[0:dupeCnt]...)
+
+		// Only remove the first item; leave remaining dupes for next match.
+		shiftLeft(r.terms, r.nActive, 1)
 	}
 
 	// And the final event that triggered this hit
 	hits.Logs = append(hits.Logs, e)
+
+	// Update active so the miniGC can cleanup up correctly
+	r.nActive += 1
 
 	// Fixup state
 	r.miniGC()
@@ -158,35 +152,22 @@ func (r *MatchSeq) miniGC() {
 		return
 	}
 
-	type dupeT struct {
-		Line      string
-		Stream    string
-		Timestamp int64
-	}
-
 	var (
-		nActive   = 1
-		dupes     map[dupeT]struct{}
-		zeroMatch = r.terms[0].asserts[0].Timestamp
+		nActive     = 0
+		forceClear  bool
+		zeroMatch   int64
+		zeroAsserts = r.terms[0].asserts
+		zeroDupes   = r.dupeMap[0]
 	)
 
-	// Do not allocate if not processing dupes.
-	// Dupe detection is used to prune duplicate terms
-	// that are incorrectly activated due to garbage collection.
-	if !r.dupeMask.Zeros() {
-		dupes = make(map[dupeT]struct{}, len(r.terms))
-		if r.dupeMask.IsSet(0) {
-			term := r.terms[0].asserts[0]
-			dupes[dupeT{
-				Line:      term.Line,
-				Stream:    term.Stream,
-				Timestamp: term.Timestamp,
-			}] = struct{}{}
-		}
+	if len(zeroAsserts) < zeroDupes+1 {
+		forceClear = true
+	} else {
+		zeroMatch = zeroAsserts[zeroDupes].Timestamp
+		nActive += 1
 	}
 
 	// For remaining active terms, find the first term that is not older than the window.
-	forceClear := false
 	for i := 1; i < r.nActive; i++ {
 
 		if forceClear {
@@ -200,19 +181,8 @@ func (r *MatchSeq) miniGC() {
 		)
 	TERMLOOP:
 		for _, term := range m {
-
 			switch {
 			case term.Timestamp < zeroMatch:
-			case r.dupeMask.IsSet(i):
-				dupe := dupeT{
-					Line:      term.Line,
-					Stream:    term.Stream,
-					Timestamp: term.Timestamp,
-				}
-				// If term is not a dupe, we can stop.
-				if _, ok := dupes[dupe]; !ok {
-					break TERMLOOP
-				}
 			default:
 				break TERMLOOP
 			}
@@ -223,17 +193,8 @@ func (r *MatchSeq) miniGC() {
 			shiftLeft(r.terms, i, cnt)
 		}
 
-		if len(r.terms[i].asserts) > 0 {
+		if len(r.terms[i].asserts) > r.dupeMap[i] {
 			nActive++
-
-			if r.dupeMask.IsSet(i) {
-				term := r.terms[i].asserts[0]
-				dupes[dupeT{
-					Line:      term.Line,
-					Stream:    term.Stream,
-					Timestamp: term.Timestamp,
-				}] = struct{}{}
-			}
 		} else {
 			forceClear = true
 		}
@@ -257,4 +218,60 @@ func (r *MatchSeq) reset() {
 // Because match sequence is edge triggered, there won't be hits.
 func (r *MatchSeq) Eval(clock int64) (h Hits) {
 	return
+}
+
+func buildSeqTerms(seqTerms ...TermT) ([]termT, map[int]int, error) {
+
+	if len(seqTerms) == 0 {
+		return nil, nil, ErrNoTerms
+	}
+
+	var (
+		i        = -1
+		lastTerm TermT
+		dupeMap  map[int]int
+		dupeSum  int
+		nTerms   = len(seqTerms)
+		terms    = make([]termT, 0, nTerms)
+	)
+
+	for _, term := range seqTerms {
+
+		switch {
+		case i == -1: // First time
+			fallthrough
+		case term != lastTerm:
+			m, err := term.NewMatcher()
+			if err != nil {
+				return nil, nil, err
+			}
+			i += 1
+			terms = append(terms, termT{matcher: m})
+			lastTerm = term
+		case dupeMap == nil: // dupe
+			dupeMap = make(map[int]int)
+			fallthrough
+		default:
+			dupeMap[i]++
+			dupeSum++
+		}
+	}
+
+	if len(terms) > maxTerms {
+		return nil, nil, ErrTooManyTerms
+	}
+
+	// Stuff dupeSum in dupeMap as an optimization
+	if dupeSum > 0 {
+		dupeMap[-1] = dupeSum
+	}
+
+	// Check if over allocated due to dupes
+	if cap(terms) > len(terms) {
+		nTerms := make([]termT, len(terms))
+		copy(nTerms, terms)
+		terms = nTerms
+	}
+
+	return terms, dupeMap, nil
 }

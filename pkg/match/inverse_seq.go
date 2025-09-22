@@ -8,6 +8,33 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+// InverseSeq matches a sequence of terms in order, within a time window,
+// with optional reset terms that can invalidate a match.
+//
+// Duplicate terms are supported, however the total number of terms is limited
+// to 64 due to the use of a bitmask for duplicate detection.
+//
+// The implementation uses a state machine approach, where each term in the
+// sequence is represented by a state.  As log entries are processed, the
+// state machine transitions through the states based on matches.
+//
+// The InverseSeq struct maintains the current state of the matcher,
+// including active terms, reset terms, and garbage collection markers.
+//
+// The Scan method processes each log entry, updating the state machine
+// and checking for matches.  When a complete sequence is matched, it is
+// returned as a Hit.
+//
+// Garbage collection is performed to remove old entries that are outside
+// the time window, ensuring efficient memory usage.
+//
+// The Eval method can be called to force evaluation of the current state,
+// and return any matches that may activated due to clock progression.
+//
+// Note: This implementation assumes that log entries are processed in
+// chronological order. Out-of-order entries will be logged as warnings
+// and ignored.
+
 type InverseSeq struct {
 	clock    int64
 	window   int64

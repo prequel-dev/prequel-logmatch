@@ -12,58 +12,16 @@ type MatchSet struct {
 	clock   int64
 	window  int64
 	gcMark  int64
-	hotMask bitMaskT
 	terms   []termT
+	hotMask bitMaskT
 	dupeMap map[int]int
 }
 
 func NewMatchSet(window int64, setTerms ...TermT) (*MatchSet, error) {
 
-	var (
-		dupeMap map[int]int
-		nTerms  = len(setTerms)
-		dupes   = make(map[TermT]int, nTerms)
-		terms   = make([]termT, 0, nTerms)
-	)
-
-	switch {
-	case nTerms > maxTerms:
-		return nil, ErrTooManyTerms
-	case nTerms == 0:
-		return nil, ErrNoTerms
-	}
-
-	// First pass to get term counts
-	for _, term := range setTerms {
-		dupes[term]++
-	}
-
-	// Iterate over the terms again to build the matcher list
-	for i, term := range setTerms {
-
-		cnt := dupes[term]
-
-		if cnt >= 1 {
-
-			m, err := term.NewMatcher()
-			if err != nil {
-				return nil, err
-			}
-
-			terms = append(terms, termT{matcher: m})
-
-			if cnt > 1 {
-
-				// We have a dupe; add it to the dupeMap
-				if dupeMap == nil {
-					dupeMap = make(map[int]int)
-				}
-				dupeMap[i] = cnt
-
-				// Delete term from the map to prevent adding it again
-				delete(dupes, term)
-			}
-		}
+	terms, dupeMap, err := buildSetTerms(setTerms...)
+	if err != nil {
+		return nil, err
 	}
 
 	return &MatchSet{
@@ -94,8 +52,7 @@ func (r *MatchSet) Scan(e LogEntry) (hits Hits) {
 			// Append the match to the assert list
 			r.terms[i].asserts = append(r.terms[i].asserts, e)
 
-			// If not a dupe or we've hit the dupe count, set the hot mask
-			if dupeCnt, ok := r.dupeMap[i]; !ok || len(r.terms[i].asserts) >= dupeCnt {
+			if dupeCnt := r.dupeMap[i]; len(r.terms[i].asserts) > dupeCnt {
 				r.hotMask.Set(i)
 			}
 
@@ -117,11 +74,10 @@ func (r *MatchSet) Scan(e LogEntry) (hits Hits) {
 	r.gcMark = disableGC
 	for i, term := range r.terms {
 
-		hitCnt := 1
-		dupeCnt := r.dupeMap[i]
-		if dupeCnt > 0 {
-			hitCnt = dupeCnt
-		}
+		var (
+			dupeCnt = r.dupeMap[i]
+			hitCnt  = 1 + dupeCnt
+		)
 
 		m := term.asserts
 		hits.Logs = append(hits.Logs, m[0:hitCnt]...)
@@ -136,7 +92,7 @@ func (r *MatchSet) Scan(e LogEntry) (hits Hits) {
 			r.hotMask.Clr(i)
 		} else {
 			// Clear the hot mask if there's a dupeCnt and we're under it
-			if len(m) < dupeCnt {
+			if len(m) <= dupeCnt {
 				r.hotMask.Clr(i)
 			}
 
@@ -181,14 +137,13 @@ func (r *MatchSet) GarbageCollect(clock int64) {
 		}
 
 		var (
-			m       = r.terms[i].asserts
-			dupeCnt = r.dupeMap[i]
+			m = r.terms[i].asserts
 		)
 
 		if len(m) == 0 {
 			r.hotMask.Clr(i)
 		} else {
-			if len(m) < dupeCnt {
+			if dupeCnt := r.dupeMap[i]; len(m) <= dupeCnt {
 				r.hotMask.Clr(i)
 			}
 			if v := m[0].Timestamp; v < r.gcMark {
@@ -202,4 +157,51 @@ func (r *MatchSet) GarbageCollect(clock int64) {
 // Because match sequence is edge triggered, there won't be hits.  But can GC.
 func (r *MatchSet) Eval(clock int64) (h Hits) {
 	return
+}
+
+func buildSetTerms(setTerms ...TermT) ([]termT, map[int]int, error) {
+
+	if len(setTerms) == 0 {
+		return nil, nil, ErrNoTerms
+	}
+
+	var (
+		i       int
+		nTerms  = len(setTerms)
+		dupeMap map[int]int
+		uniqs   = make(map[TermT]int, nTerms)
+		terms   = make([]termT, 0, nTerms)
+	)
+
+	// O(n) on nTerms
+	for _, term := range setTerms {
+
+		if idx, ok := uniqs[term]; ok {
+			if dupeMap == nil {
+				dupeMap = make(map[int]int)
+			}
+			dupeMap[idx]++
+		} else {
+			m, err := term.NewMatcher()
+			if err != nil {
+				return nil, nil, err
+			}
+			terms = append(terms, termT{matcher: m})
+			uniqs[term] = i
+			i += 1
+		}
+	}
+
+	if len(terms) > maxTerms {
+		return nil, nil, ErrTooManyTerms
+	}
+
+	// Check if over allocated due to dupes
+	if cap(terms) > len(terms) {
+		nTerms := make([]termT, len(terms))
+		copy(nTerms, terms)
+		terms = nTerms
+	}
+
+	return terms, dupeMap, nil
 }

@@ -1,12 +1,71 @@
 package match
 
-import "testing"
+import (
+	"fmt"
+	"testing"
 
-type stepT[T any] struct {
+	"github.com/prequel-dev/prequel-logmatch/pkg/entry"
+)
+
+type stepT struct {
 	stamp int64
 	line  string
 	cb    func(*testing.T, int, Hits)
-	postF func(*testing.T, int, *T)
+	postF func(*testing.T, int, Matcher)
+}
+
+type caseT struct {
+	clock  int64
+	window int64
+	terms  []string
+	reset  []ResetT
+	steps  []stepT
+}
+
+type casesT map[string]caseT
+
+func (c casesT) run(t *testing.T, factory func(caseT) (Matcher, error)) {
+	t.Helper()
+
+	for name, tc := range c {
+		t.Run(name, func(t *testing.T) {
+			t.Helper()
+
+			sm, err := factory(tc)
+			if err != nil {
+				t.Fatalf("Expected err == nil, got %v", err)
+			}
+
+			clock := tc.clock
+
+			for idx, step := range tc.steps {
+
+				clock += 1
+				stamp := clock
+				if step.stamp != 0 {
+					stamp = step.stamp
+					clock = stamp
+				}
+
+				if step.line != "" {
+					var (
+						entry = entry.LogEntry{Timestamp: stamp, Line: step.line}
+						hits  = sm.Scan(entry)
+					)
+
+					if step.cb == nil {
+						checkNoFire(t, idx+1, hits)
+					} else {
+						step.cb(t, idx+1, hits)
+					}
+				}
+
+				if step.postF != nil {
+					step.postF(t, idx+1, sm)
+				}
+			}
+		})
+	}
 }
 
 func matchStamps(stamps ...int64) func(*testing.T, int, Hits) {
@@ -49,8 +108,8 @@ func matchLinesN(cnt int, lines ...string) func(*testing.T, int, Hits) {
 	}
 }
 
-func checkActive[T any](nActive int) func(*testing.T, int, *T) {
-	return func(t *testing.T, step int, sm *T) {
+func checkActive(nActive int) func(*testing.T, int, Matcher) {
+	return func(t *testing.T, step int, sm Matcher) {
 		t.Helper()
 		var active int
 		switch v := any(sm).(type) {
@@ -68,8 +127,8 @@ func checkActive[T any](nActive int) func(*testing.T, int, *T) {
 	}
 }
 
-func checkHotMask[T any](mask int64) func(*testing.T, int, *T) {
-	return func(t *testing.T, step int, sm *T) {
+func checkHotMask(mask int64) func(*testing.T, int, Matcher) {
+	return func(t *testing.T, step int, sm Matcher) {
 		t.Helper()
 		var hotMask bitMaskT
 		switch v := any(sm).(type) {
@@ -94,8 +153,8 @@ func checkNoFire(t *testing.T, step int, hits Hits) {
 	}
 }
 
-func checkResets[T any](idx int, cnt int) func(*testing.T, int, *T) {
-	return func(t *testing.T, step int, sm *T) {
+func checkResets(idx int, cnt int) func(*testing.T, int, Matcher) {
+	return func(t *testing.T, step int, sm Matcher) {
 		t.Helper()
 		var resetCnt int
 		switch v := any(sm).(type) {
@@ -119,8 +178,8 @@ func checkResets[T any](idx int, cnt int) func(*testing.T, int, *T) {
 	}
 }
 
-func checkGCMark[T any](mark int64) func(*testing.T, int, *T) {
-	return func(t *testing.T, step int, sm *T) {
+func checkGCMark(mark int64) func(*testing.T, int, Matcher) {
+	return func(t *testing.T, step int, sm Matcher) {
 		t.Helper()
 		var gcMark int64
 		switch v := any(sm).(type) {
@@ -138,16 +197,16 @@ func checkGCMark[T any](mark int64) func(*testing.T, int, *T) {
 	}
 }
 
-func checkEval[T Matcher](clock int64, cb func(*testing.T, int, Hits)) func(*testing.T, int, T) {
-	return func(t *testing.T, step int, sm T) {
+func checkEval(clock int64, cb func(*testing.T, int, Hits)) func(*testing.T, int, Matcher) {
+	return func(t *testing.T, step int, sm Matcher) {
 		t.Helper()
 		hits := sm.Eval(clock)
 		cb(t, step, hits)
 	}
 }
 
-func garbageCollect[T Matcher](clock int64) func(*testing.T, int, T) {
-	return func(t *testing.T, step int, sm T) {
+func garbageCollect(clock int64) func(*testing.T, int, Matcher) {
+	return func(t *testing.T, step int, sm Matcher) {
 		t.Helper()
 		sm.GarbageCollect(clock)
 	}
@@ -166,4 +225,20 @@ func makeTermsA(terms ...string) []TermT {
 
 func makeRaw(term string) TermT {
 	return TermT{Type: TermRaw, Value: term}
+}
+
+func makeTermsN(n int) []TermT {
+	terms := make([]TermT, n)
+	for i := range n {
+		terms[i] = makeRaw(fmt.Sprintf("term %d", i))
+	}
+	return terms
+}
+
+func makeDupesN(n int) []TermT {
+	var out []TermT
+	for range n {
+		out = append(out, TermT{Type: TermRaw, Value: "dupe"})
+	}
+	return out
 }
