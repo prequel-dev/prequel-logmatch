@@ -1,8 +1,9 @@
 package match
 
 type Hits struct {
-	Cnt  int
-	Logs []LogEntry
+	Cnt   int
+	Logs  []LogEntry
+	Props map[string]any
 }
 
 func (h *Hits) PopFront() []LogEntry {
