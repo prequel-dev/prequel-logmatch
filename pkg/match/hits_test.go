@@ -70,3 +70,13 @@ func TestHitsIndex(t *testing.T) {
 		t.Errorf("Expected nil for out of bounds index")
 	}
 }
+
+func TestHitsIndexNegative(t *testing.T) {
+	h := Hits{
+		Cnt:  2,
+		Logs: makeTestLogs(4),
+	}
+	if h.Index(-1) != nil {
+		t.Errorf("Expected nil for negative index")
+	}
+}

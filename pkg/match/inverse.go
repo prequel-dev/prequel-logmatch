@@ -39,6 +39,10 @@ type termT struct {
 }
 
 func (r resetT) calcWindowA(anchors []anchorT) (int64, int64) {
+	if len(anchors) == 0 {
+		return 0, 0
+	}
+
 	var (
 		width  = r.window
 		anchor = anchors[r.anchor].clock
