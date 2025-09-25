@@ -26,7 +26,7 @@ func (h Hits) Last() []LogEntry {
 }
 
 func (h Hits) Index(i int) []LogEntry {
-	if i >= h.Cnt {
+	if i < 0 || i >= h.Cnt {
 		return nil
 	}
 	var (

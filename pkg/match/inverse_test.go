@@ -242,3 +242,10 @@ func makeDupesN(n int) []TermT {
 	}
 	return out
 }
+
+func TestCalcWindow(t *testing.T) {
+	var anchors []anchorT
+
+	r := resetT{}
+	r.calcWindowA(anchors)
+}
