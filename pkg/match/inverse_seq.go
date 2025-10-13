@@ -175,11 +175,20 @@ func (r *InverseSeq) Scan(e entry.LogEntry) (hits Hits) {
 		}
 	}
 
-	return r.Eval(e.Timestamp)
+	return r._eval(e.Timestamp)
 }
 
-// Assert clock, may used to close out matcher
 func (r *InverseSeq) Eval(clock int64) (hits Hits) {
+	// If clock is less than or equal to current clock, do nothing.
+	// In those cases we've already processed up to the current clock.
+	if clock <= r.clock {
+		return
+	}
+	r.clock = clock
+	return r._eval(clock)
+}
+
+func (r *InverseSeq) _eval(clock int64) (hits Hits) {
 	var nTerms = len(r.terms)
 
 	for r.nActive == nTerms {
