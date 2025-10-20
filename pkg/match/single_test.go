@@ -2,6 +2,8 @@ package match
 
 import (
 	"testing"
+
+	"github.com/rs/zerolog"
 )
 
 func NewCasesSingle() casesT {
@@ -56,5 +58,55 @@ func TestSingleInitFail(t *testing.T) {
 				t.Fatalf("Expected err == %v, got %v", tc.err, err)
 			}
 		})
+	}
+}
+
+func disableLogs() func() {
+	level := zerolog.GlobalLevel()
+	zerolog.SetGlobalLevel(zerolog.Disabled)
+	return func() {
+		zerolog.SetGlobalLevel(level)
+	}
+}
+
+func BenchmarkSingleMiss(b *testing.B) {
+	defer disableLogs()()
+
+	sm, err := NewMatchSingle(TermT{Type: TermRaw, Value: "shrubbery"})
+	if err != nil {
+		b.Fatalf("Expected err == nil, got %v", err)
+	}
+
+	var (
+		clock int64
+		ev1   = LogEntry{Line: "nope"}
+	)
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		clock++
+		ev1.Timestamp = clock
+		sm.Scan(ev1)
+	}
+}
+
+func BenchmarkSingleHit(b *testing.B) {
+	defer disableLogs()()
+
+	sm, err := NewMatchSingle(TermT{Type: TermRaw, Value: "shrubbery"})
+	if err != nil {
+		b.Fatalf("Expected err == nil, got %v", err)
+	}
+
+	var (
+		clock int64
+		ev1   = LogEntry{Line: "Bring me a shrubbery"}
+	)
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		clock++
+		ev1.Timestamp = clock
+		sm.Scan(ev1)
 	}
 }

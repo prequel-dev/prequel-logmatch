@@ -1,7 +1,6 @@
 package match
 
 import (
-	"math"
 	"slices"
 
 	"github.com/prequel-dev/prequel-logmatch/pkg/entry"
@@ -11,8 +10,8 @@ import (
 // InverseSeq matches a sequence of terms in order, within a time window,
 // with optional reset terms that can invalidate a match.
 //
-// Duplicate terms are supported, however the total number of terms is limited
-// to 64 due to the use of a bitmask for duplicate detection.
+// Duplicate terms are supported.  However, reset terms with non-zero anchors
+// on duplicate terms are not supported.
 //
 // The implementation uses a state machine approach, where each term in the
 // sequence is represented by a state.  As log entries are processed, the
@@ -29,61 +28,32 @@ import (
 // the time window, ensuring efficient memory usage.
 //
 // The Eval method can be called to force evaluation of the current state,
-// and return any matches that may activated due to clock progression.
+// and return any matches that may activate due to clock progression.
 //
 // Note: This implementation assumes that log entries are processed in
 // chronological order. Out-of-order entries will be logged as warnings
 // and ignored.
 
 type InverseSeq struct {
-	clock    int64
-	window   int64
-	gcMark   int64
-	gcLeft   int64
-	gcRight  int64
-	nActive  int
-	dupeMask bitMaskT
-	terms    []termT
-	resets   []resetT
+	clock   int64
+	window  int64
+	gcMark  int64
+	gcLeft  int64
+	gcRight int64
+	nActive int
+	terms   []termT
+	resets  []resetT
+	dupeMap map[int]int
 }
 
 func NewInverseSeq(window int64, seqTerms []TermT, resetTerms []ResetT) (*InverseSeq, error) {
 
-	var (
-		resets   []resetT
-		nTerms   = len(seqTerms)
-		terms    = make([]termT, 0, nTerms)
-		dupes    = make(map[TermT]int, nTerms)
-		dupeMask bitMaskT
-	)
-
-	switch {
-	case nTerms > maxTerms:
-		return nil, ErrTooManyTerms
-	case nTerms == 0:
-		return nil, ErrNoTerms
+	terms, dupeMap, err := buildSeqTerms(seqTerms...)
+	if err != nil {
+		return nil, err
 	}
 
-	// Calculate dupes
-	for _, term := range seqTerms {
-		if v, ok := dupes[term]; ok {
-			dupes[term] = v + 1
-		} else {
-			dupes[term] = 1
-		}
-	}
-
-	for i, term := range seqTerms {
-		m, err := term.NewMatcher()
-		if err != nil {
-			return nil, err
-		}
-		terms = append(terms, termT{matcher: m})
-		if dupes[term] > 1 {
-			dupeMask.Set(i)
-		}
-	}
-
+	var resets []resetT
 	if len(resetTerms) > 0 {
 		resets = make([]resetT, 0, len(resetTerms))
 
@@ -94,6 +64,8 @@ func NewInverseSeq(window int64, seqTerms []TermT, resetTerms []ResetT) (*Invers
 				return nil, err
 			case int(term.Anchor) >= len(seqTerms):
 				return nil, ErrAnchorRange
+			case !maybeAnchor(len(terms), dupeMap, term.Anchor):
+				return nil, ErrAnchorNoDupes
 			}
 
 			resets = append(resets, resetT{
@@ -105,17 +77,46 @@ func NewInverseSeq(window int64, seqTerms []TermT, resetTerms []ResetT) (*Invers
 			})
 		}
 	}
+
 	gcLeft, gcRight := calcGCWindow(window, resets)
 
 	return &InverseSeq{
-		window:   window,
-		gcLeft:   gcLeft,
-		gcRight:  gcRight,
-		gcMark:   disableGC,
-		dupeMask: dupeMask,
-		terms:    terms,
-		resets:   resets,
+		window:  window,
+		gcLeft:  gcLeft,
+		gcRight: gcRight,
+		gcMark:  disableGC,
+		terms:   terms,
+		resets:  resets,
+		dupeMap: dupeMap,
 	}, nil
+}
+
+func maybeAnchor(nTerms int, dupeMap map[int]int, anchor uint8) bool {
+	if dupeMap == nil || anchor == 0 {
+		return true
+	}
+
+	// The anchor is non-zero so refers to a term that may be a dupe.
+	// Due to the way this is implemented, we cannot support non-zero anchors on dupe terms.
+	// See prequel-machine for this support.
+
+	curOff := 0
+	for i := range nTerms {
+		curOff += 1
+
+		// If anchor is on the first term before dupes, OK.
+		if int(anchor) < curOff {
+			return true
+		}
+
+		// If anchor is within the dupes of this term, not OK.
+		curOff += dupeMap[i]
+		if int(anchor) < curOff {
+			return false
+		}
+	}
+
+	return false
 }
 
 func (r *InverseSeq) Scan(e entry.LogEntry) (hits Hits) {
@@ -124,19 +125,19 @@ func (r *InverseSeq) Scan(e entry.LogEntry) (hits Hits) {
 			Str("line", e.Line).
 			Int64("stamp", e.Timestamp).
 			Int64("clock", r.clock).
-			Msg("MatchSeq: Out of order event.")
+			Msg("InverseSeq: Out of order event.")
 		return
 	}
 	r.clock = e.Timestamp
 
 	r.maybeGC(e.Timestamp)
 
-	// Zero match optimization to avoid resets if no lookback is needed.
+	// Zero match optimization if first term has no asserts yet
 	var zeroMatch bool
 	switch {
-	case r.nActive > 0:
+	case len(r.terms[0].asserts) > 0:
 	case r.gcLeft > 0:
-	case !r.terms[r.nActive].matcher(e.Line):
+	case !r.terms[0].matcher(e.Line):
 		return
 	default:
 		zeroMatch = true
@@ -162,13 +163,23 @@ func (r *InverseSeq) Scan(e entry.LogEntry) (hits Hits) {
 		switch {
 		case zeroMatch:
 		case !r.terms[r.nActive].matcher(e.Line):
-			return // No match on active term; NOOP.
+			// No match on active term; NOOP.
+			return
 		}
 
 		r.terms[r.nActive].asserts = append(r.terms[r.nActive].asserts, e)
-		r.nActive += 1
-
 		r.resetGcMark(e.Timestamp + r.gcRight)
+
+		// We have matched the active term; check if there are dupes before advancing.
+		dupeCnt := r.dupeMap[r.nActive]
+
+		if len(r.terms[r.nActive].asserts) <= dupeCnt {
+			// Not enough dupes yet; append current for later.
+			return
+		}
+
+		// We've matched the active term; advance.
+		r.nActive += 1
 
 		if r.nActive < len(r.terms) {
 			return
@@ -189,45 +200,50 @@ func (r *InverseSeq) Eval(clock int64) (hits Hits) {
 }
 
 func (r *InverseSeq) _eval(clock int64) (hits Hits) {
-	var nTerms = len(r.terms)
+	nTerms := len(r.terms)
 
 	for r.nActive == nTerms {
 
 		var (
-			drop   = -1
-			tStart = r.terms[0].asserts[0].Timestamp
-			tStop  = r.terms[len(r.terms)-1].asserts[0].Timestamp
+			drop    = anchorT{term: -1}
+			dupeCnt = r.dupeMap[nTerms-1]
+			tStart  = r.terms[0].asserts[0].Timestamp
+			tStop   = r.terms[nTerms-1].asserts[dupeCnt].Timestamp
 		)
 
 		if tStop-tStart > r.window {
-			drop = 0
+			drop.term = 0
 		} else if r.resets != nil {
-			retryNanos, anchor := r.checkReset(clock)
+			anchor := r.checkReset(clock)
 
 			switch {
-			case anchor != math.MaxUint8:
-				drop = int(anchor)
-			case retryNanos > 0:
+			case anchor.ValidTerm():
+				drop = anchor
+			case anchor.clock > 0:
 				// We have a match that is too recent; we must wait.
 				return
 			}
 		}
 
-		if drop >= 0 {
+		if drop.ValidTerm() {
 			// We have a negative match;
 			// remove the offending term assert and continue.
-			shiftLeft(r.terms, drop, 1)
+			shiftAnchor(r.terms, drop)
 		} else {
-			// Fire hit and prune first assert from each term.
+			// Fire hit and prune asserts
 			hits.Cnt += 1
 			if hits.Logs == nil {
-				hits.Logs = make([]LogEntry, 0, nTerms)
+				hits.Logs = make([]LogEntry, 0, nTerms+r.dupeMap[-1])
 			}
 
 			for i, term := range r.terms {
-				hits.Logs = append(hits.Logs, term.asserts[0])
-				shiftLeft(r.terms, i, 1)
+				hitCnt := r.dupeMap[i] + 1
+				hits.Logs = append(hits.Logs, term.asserts[:hitCnt]...)
+
+				// Remove all used asserts
+				shiftLeft(r.terms, i, hitCnt)
 			}
+
 		}
 
 		// Fixup state
@@ -321,40 +337,26 @@ func (r *InverseSeq) GarbageCollect(clock int64) {
 
 func (r *InverseSeq) miniGC() {
 
-	if len(r.terms[0].asserts) == 0 {
+	nZeroAsserts := len(r.terms[0].asserts)
+	if nZeroAsserts == 0 {
 		r.reset()
 		return
 	}
 
-	type dupeT struct {
-		Line      string
-		Stream    string
-		Timestamp int64
-	}
-
 	var (
-		nActive   = 1
-		dupes     map[dupeT]struct{}
-		zeroMatch = r.terms[0].asserts[0].Timestamp
+		nActive    int
+		dupeCnt    = r.dupeMap[0]
+		zeroMatch  = r.terms[0].asserts[0].Timestamp
+		forceClear bool
 	)
 
-	// Do not allocate if not processing dupes.
-	// Dupe detection  is used to prune duplicate terms
-	// that are incorrectly activated due to garbage collection.
-	if !r.dupeMask.Zeros() {
-		dupes = make(map[dupeT]struct{}, len(r.terms))
-		if r.dupeMask.IsSet(0) {
-			term := r.terms[0].asserts[0]
-			dupes[dupeT{
-				Line:      term.Line,
-				Stream:    term.Stream,
-				Timestamp: term.Timestamp,
-			}] = struct{}{}
-		}
+	if nZeroAsserts > dupeCnt {
+		nActive = 1
+	} else {
+		forceClear = true
 	}
 
 	// For remaining active terms, find the first term that is not older than the window.
-	forceClear := false
 	for i := 1; i < r.nActive; i++ {
 
 		if forceClear {
@@ -362,44 +364,23 @@ func (r *InverseSeq) miniGC() {
 			continue
 		}
 
-		var cnt int
-
-	TERMLOOP:
-		for _, term := range r.terms[i].asserts {
-
-			switch {
-			case term.Timestamp < zeroMatch:
-			case r.dupeMask.IsSet(i):
-				dupe := dupeT{
-					Line:      term.Line,
-					Stream:    term.Stream,
-					Timestamp: term.Timestamp,
-				}
-				// If term is not a dupe, we can stop.
-				if _, ok := dupes[dupe]; !ok {
-					break TERMLOOP
-				}
-			default:
-				break TERMLOOP
+		cnt := 0
+		for _, t := range r.terms[i].asserts {
+			if t.Timestamp < zeroMatch {
+				cnt += 1
+			} else {
+				zeroMatch = t.Timestamp
+				break
 			}
-			cnt += 1
 		}
 
 		if cnt > 0 {
 			shiftLeft(r.terms, i, cnt)
 		}
 
-		if len(r.terms[i].asserts) > 0 {
+		dupeCnt := r.dupeMap[i]
+		if len(r.terms[i].asserts) > dupeCnt {
 			nActive++
-
-			if r.dupeMask.IsSet(i) {
-				term := r.terms[i].asserts[0]
-				dupes[dupeT{
-					Line:      term.Line,
-					Stream:    term.Stream,
-					Timestamp: term.Timestamp,
-				}] = struct{}{}
-			}
 		} else {
 			forceClear = true
 		}
@@ -416,26 +397,35 @@ func (r *InverseSeq) reset() {
 	r.nActive = 0
 }
 
-func (r *InverseSeq) checkReset(clock int64) (int64, uint8) {
-	// 'stamps'  escapes;  annoying.
-	// TODO: consider avoiding by using s.terms[0].asserts[0].Timestamp directly
+func (r *InverseSeq) checkReset(clock int64) anchorT {
+
 	var (
-		nTerms = len(r.terms)
-		stamps = make([]int64, nTerms)
+		nTerms  = len(r.terms)
+		nDupes  = r.dupeMap[-1]
+		anchors = make([]anchorT, 0, nTerms+nDupes)
 	)
-	for i := 0; i < nTerms; i++ {
-		stamps[i] = r.terms[i].asserts[0].Timestamp
+
+	// Gather timestamps from match
+	for i, term := range r.terms {
+		cnt := r.dupeMap[i] + 1
+		for j := range cnt {
+			anchors = append(anchors, anchorT{
+				clock:  term.asserts[j].Timestamp,
+				term:   i,
+				offset: j,
+			})
+		}
 	}
 
 	// Iterate across the resets; determine if we have a negative match.
 	for i, reset := range r.resets {
-		start, stop := reset.calcWindow(stamps)
+		start, stop := reset.calcWindowA(anchors)
 
 		// Check if we have a negative term in the reset window.
 		// TODO: Binary search?
 		for _, ts := range r.resets[i].resets {
 			if ts >= start && ts <= stop {
-				return 0, reset.anchor
+				return anchors[reset.anchor]
 			}
 		}
 
@@ -443,11 +433,14 @@ func (r *InverseSeq) checkReset(clock int64) (int64, uint8) {
 		// We must wait until the reset window is in the past due to events with
 		// duplicate timestamps.  Thus must wait until one tick past the reset window.
 		if stop >= clock {
-			return stop - clock + 1, math.MaxUint8
+			return anchorT{
+				term:  -1,
+				clock: stop - clock + 1,
+			}
 		}
 	}
 
-	return 0, math.MaxUint8
+	return anchorT{term: -1}
 }
 
 func (r *InverseSeq) resetGcMark(nMark int64) {

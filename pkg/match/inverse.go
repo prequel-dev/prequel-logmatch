@@ -6,9 +6,10 @@ import (
 )
 
 var (
-	ErrNoTerms      = errors.New("no terms")
-	ErrTooManyTerms = errors.New("too many terms")
-	ErrAnchorRange  = errors.New("anchor out of range")
+	ErrNoTerms       = errors.New("no terms")
+	ErrTooManyTerms  = errors.New("too many terms")
+	ErrAnchorRange   = errors.New("anchor out of range")
+	ErrAnchorNoDupes = errors.New("non zero anchors unsupported with duplicate terms")
 )
 
 const (
@@ -54,29 +55,6 @@ func (r resetT) calcWindowA(anchors []anchorT) (int64, int64) {
 	// Determine the width of the window
 	if !r.absolute {
 		width += anchors[len(anchors)-1].clock - anchors[0].clock
-	}
-
-	if width <= 0 {
-		// Effectively disables the negative window
-		width = 0
-	}
-
-	// Calculate the start and stop times
-	return anchor, anchor + width
-}
-
-func (r resetT) calcWindow(stamps []int64) (int64, int64) {
-	var (
-		width  = r.window
-		anchor = stamps[r.anchor]
-	)
-
-	// Slide the anchor if necessary
-	anchor += r.slide
-
-	// Determine the width of the window
-	if !r.absolute {
-		width += stamps[len(stamps)-1] - stamps[0]
 	}
 
 	if width <= 0 {

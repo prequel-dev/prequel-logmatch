@@ -3,8 +3,6 @@ package match
 import (
 	"testing"
 	"time"
-
-	"github.com/rs/zerolog"
 )
 
 func NewCasesSeqSimple() casesT {
@@ -211,7 +209,7 @@ func NewCasesSeqDupes() casesT {
 				{line: "Discarding message"},
 				{line: "Discarding message"},
 				{line: "Mnesia overloaded", cb: matchStamps(1, 3, 4, 7)},
-				{line: "Mnesia overloaded", cb: matchStamps(3, 4, 5, 8)},
+				{line: "Mnesia overloaded"},
 				{line: "Mnesia overloaded", stamp: 6 + 10 + 1}, // Because dupe timestamps are consider matches in a sequence, window has to be past the last "Discarding message" to prevent fire
 			},
 		},
@@ -287,7 +285,7 @@ func NewCasesSeqDupes() casesT {
 			// --234567----------- dupe
 			// ---34567----------- dupe
 			// --------89---------- fire
-			// Should fire {1,2,3,8},{2,3,4,9} due to same timestamp
+			// Should fire {1,2,3,8},{4,5,6,9} due to same timestamp
 			window: 3,
 			terms:  []string{"dupe", "dupe", "dupe", "fire"},
 			steps: []stepT{
@@ -299,7 +297,7 @@ func NewCasesSeqDupes() casesT {
 				{line: "dupe6", stamp: 1},
 				{line: "dupe7", stamp: 1},
 				{line: "fire1", stamp: 1, cb: matchLines("dupe1", "dupe2", "dupe3", "fire1")},
-				{line: "fire2", stamp: 2, cb: matchLines("dupe2", "dupe3", "dupe4", "fire2")},
+				{line: "fire2", stamp: 2, cb: matchLines("dupe4", "dupe5", "dupe6", "fire2")},
 			},
 		},
 
@@ -541,10 +539,7 @@ func BenchmarkSequenceHitOverlap(b *testing.B) {
 }
 
 func BenchmarkSeqRunawayMatch(b *testing.B) {
-	level := zerolog.GlobalLevel()
-	zerolog.SetGlobalLevel(zerolog.Disabled)
-	defer zerolog.SetGlobalLevel(level)
-
+	defer disableLogs()()
 	sm, err := NewMatchSeq(1000000, makeTermsA("frank", "burns")...)
 	if err != nil {
 		b.Fatalf("Expected err == nil, got %v", err)
