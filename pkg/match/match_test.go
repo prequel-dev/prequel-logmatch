@@ -345,3 +345,300 @@ func BenchmarkMatchJson(b *testing.B) {
 	}
 
 }
+
+func TestMakeJqMatchFailureCases(t *testing.T) {
+	tests := []struct {
+		name        string
+		term        TermT
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name: "InvalidJqSyntax",
+			term: TermT{
+				Type:  TermJqJson,
+				Value: "invalid jq syntax ][",
+			},
+			expectError: true,
+		},
+		{
+			name: "UnknownJqFormat",
+			term: TermT{
+				Type:  TermTypeT(999), // Unknown type
+				Value: ".field",
+			},
+			expectError: true,
+			errorMsg:    "unknown jq format",
+		},
+		{
+			name: "InvalidJqFilter",
+			term: TermT{
+				Type:  TermJqJson,
+				Value: ".field | unknown_function",
+			},
+			expectError: true,
+		},
+		{
+			name: "EmptyJqQuery",
+			term: TermT{
+				Type:  TermJqJson,
+				Value: "",
+			},
+			expectError: true,
+		},
+		{
+			name: "MalformedJqQuery",
+			term: TermT{
+				Type:  TermJqYaml,
+				Value: ".[unclosed",
+			},
+			expectError: true,
+		},
+		{
+			name: "ValidJqQuery",
+			term: TermT{
+				Type:  TermJqJson,
+				Value: ".field",
+			},
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			matcher, err := makeJqMatch(tt.term)
+
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("Expected error for term %+v, but got nil", tt.term)
+				}
+				if tt.errorMsg != "" && err.Error() != tt.errorMsg {
+					t.Errorf("Expected error message '%s', got '%s'", tt.errorMsg, err.Error())
+				}
+				if matcher != nil {
+					t.Error("Expected nil matcher when error occurs")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Expected no error for valid term, got %v", err)
+				}
+				if matcher == nil {
+					t.Error("Expected valid matcher for valid term")
+				}
+			}
+		})
+	}
+}
+
+func TestJqMatchRuntimeFailures(t *testing.T) {
+	tests := []struct {
+		name     string
+		term     TermT
+		input    string
+		expected bool
+	}{
+		{
+			name: "MalformedJSON",
+			term: TermT{
+				Type:  TermJqJson,
+				Value: ".field",
+			},
+			input:    "{malformed json",
+			expected: false,
+		},
+		{
+			name: "MalformedYAML",
+			term: TermT{
+				Type:  TermJqYaml,
+				Value: ".field",
+			},
+			input:    "key: value: invalid",
+			expected: false,
+		},
+		{
+			name: "ValidJSONButNoMatch",
+			term: TermT{
+				Type:  TermJqJson,
+				Value: "select(.missing_field == \"value\")",
+			},
+			input:    "{\"field\": \"value\"}",
+			expected: false,
+		},
+		{
+			name: "ValidYAMLButNoMatch",
+			term: TermT{
+				Type:  TermJqYaml,
+				Value: "select(.missing_field == \"value\")",
+			},
+			input:    "field: value",
+			expected: false,
+		},
+		{
+			name: "JSONQueryWithRuntimeError",
+			term: TermT{
+				Type:  TermJqJson,
+				Value: ".field | error(\"test error\")",
+			},
+			input:    "{\"field\": \"value\"}",
+			expected: false, // Runtime error should return false
+		},
+		{
+			name: "JSONQueryWithHaltError",
+			term: TermT{
+				Type:  TermJqJson,
+				Value: ".field | halt",
+			},
+			input:    "{\"field\": \"value\"}",
+			expected: false, // Halt should break the loop
+		},
+		{
+			name: "JSONBooleanTrueResult",
+			term: TermT{
+				Type:  TermJqJson,
+				Value: ".field == \"value\"",
+			},
+			input:    "{\"field\": \"value\"}",
+			expected: true,
+		},
+		{
+			name: "JSONBooleanFalseResult",
+			term: TermT{
+				Type:  TermJqJson,
+				Value: ".field == \"wrong\"",
+			},
+			input:    "{\"field\": \"value\"}",
+			expected: false,
+		},
+		{
+			name: "JSONNonBooleanTruthyResult",
+			term: TermT{
+				Type:  TermJqJson,
+				Value: ".field",
+			},
+			input:    "{\"field\": \"value\"}",
+			expected: true, // Non-boolean non-null result should be truthy
+		},
+		{
+			name: "JSONNullResult",
+			term: TermT{
+				Type:  TermJqJson,
+				Value: ".missing_field",
+			},
+			input:    "{\"field\": \"value\"}",
+			expected: false, // Null result should be falsy
+		},
+		{
+			name: "EmptyStringInput",
+			term: TermT{
+				Type:  TermJqJson,
+				Value: ".field",
+			},
+			input:    "",
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			matcher, err := makeJqMatch(tt.term)
+			if err != nil {
+				t.Fatalf("Failed to create matcher: %v", err)
+			}
+
+			result := matcher(tt.input)
+			if result != tt.expected {
+				t.Errorf("Expected %v for input %q, got %v", tt.expected, tt.input, result)
+			}
+		})
+	}
+}
+
+func TestJqMatchCompileErrors(t *testing.T) {
+	// Test cases that should fail during jq query compilation
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{
+			name:  "InvalidFunction",
+			query: ".field | invalid_function",
+		},
+		{
+			name:  "InvalidSyntax",
+			query: ".field |",
+		},
+		{
+			name:  "UnclosedBracket",
+			query: ".field[",
+		},
+		{
+			name:  "InvalidOperator",
+			query: ".field @@@ \"value\"",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			term := TermT{
+				Type:  TermJqJson,
+				Value: tt.query,
+			}
+
+			_, err := makeJqMatch(term)
+			if err == nil {
+				t.Errorf("Expected compilation error for query %q, but got nil", tt.query)
+			}
+		})
+	}
+}
+
+func TestJqMatchWithCachedUnmarshaling(t *testing.T) {
+	term := TermT{
+		Type:  TermJqJson,
+		Value: ".field",
+	}
+
+	matcher, err := makeJqMatch(term)
+	if err != nil {
+		t.Fatalf("Failed to create matcher: %v", err)
+	}
+
+	input := "{\"field\": \"value\"}"
+
+	// First call - should unmarshal
+	result1 := matcher(input)
+	if !result1 {
+		t.Error("Expected true for first call")
+	}
+
+	// Second call with same input - should use cached result
+	result2 := matcher(input)
+	if !result2 {
+		t.Error("Expected true for cached call")
+	}
+
+	// Third call with different input - should unmarshal again
+	result3 := matcher("{\"field\": \"different\"}")
+	if !result3 {
+		t.Error("Expected true for different input")
+	}
+}
+
+func TestJqMatchErrorHandling(t *testing.T) {
+	// Test that runtime errors in jq queries are handled gracefully
+	term := TermT{
+		Type:  TermJqJson,
+		Value: ".field | if type == \"string\" then . else error(\"not a string\") end",
+	}
+
+	matcher, err := makeJqMatch(term)
+	if err != nil {
+		t.Fatalf("Failed to create matcher: %v", err)
+	}
+
+	// This should trigger the error path in the jq query
+	result := matcher("{\"field\": 123}")
+	if result {
+		t.Error("Expected false when jq query has runtime error")
+	}
+}

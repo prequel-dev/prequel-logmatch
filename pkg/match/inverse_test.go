@@ -249,3 +249,216 @@ func TestCalcWindow(t *testing.T) {
 	r := resetT{}
 	r.calcWindowA(anchors)
 }
+
+func TestResetTCalcWindowA(t *testing.T) {
+	tests := []struct {
+		name     string
+		reset    resetT
+		anchors  []anchorT
+		wantFrom int64
+		wantTo   int64
+	}{
+		{
+			name: "EmptyAnchors",
+			reset: resetT{
+				window:   10,
+				slide:    0,
+				anchor:   0,
+				absolute: false,
+			},
+			anchors:  []anchorT{},
+			wantFrom: 0,
+			wantTo:   0,
+		},
+		{
+			name: "SingleAnchorAbsolute",
+			reset: resetT{
+				window:   10,
+				slide:    0,
+				anchor:   0,
+				absolute: true,
+			},
+			anchors: []anchorT{
+				{clock: 5, term: 0, offset: 0},
+			},
+			wantFrom: 5,
+			wantTo:   15,
+		},
+		{
+			name: "SingleAnchorRelative",
+			reset: resetT{
+				window:   10,
+				slide:    0,
+				anchor:   0,
+				absolute: false,
+			},
+			anchors: []anchorT{
+				{clock: 5, term: 0, offset: 0},
+			},
+			wantFrom: 5,
+			wantTo:   15, // 5 + 10 + (5-5)
+		},
+		{
+			name: "MultipleAnchorsAbsolute",
+			reset: resetT{
+				window:   10,
+				slide:    0,
+				anchor:   0,
+				absolute: true,
+			},
+			anchors: []anchorT{
+				{clock: 2, term: 0, offset: 0},
+				{clock: 5, term: 1, offset: 0},
+				{clock: 8, term: 2, offset: 0},
+			},
+			wantFrom: 2,
+			wantTo:   12, // 2 + 10
+		},
+		{
+			name: "MultipleAnchorsRelative",
+			reset: resetT{
+				window:   10,
+				slide:    0,
+				anchor:   0,
+				absolute: false,
+			},
+			anchors: []anchorT{
+				{clock: 2, term: 0, offset: 0},
+				{clock: 5, term: 1, offset: 0},
+				{clock: 8, term: 2, offset: 0},
+			},
+			wantFrom: 2,
+			wantTo:   18, // 2 + 10 + (8-2)
+		},
+		{
+			name: "WithPositiveSlide",
+			reset: resetT{
+				window:   10,
+				slide:    3,
+				anchor:   0,
+				absolute: true,
+			},
+			anchors: []anchorT{
+				{clock: 5, term: 0, offset: 0},
+				{clock: 8, term: 1, offset: 0},
+			},
+			wantFrom: 8,  // 5 + 3
+			wantTo:   18, // 8 + 10
+		},
+		{
+			name: "WithNegativeSlide",
+			reset: resetT{
+				window:   10,
+				slide:    -2,
+				anchor:   0,
+				absolute: true,
+			},
+			anchors: []anchorT{
+				{clock: 5, term: 0, offset: 0},
+				{clock: 8, term: 1, offset: 0},
+			},
+			wantFrom: 3,  // 5 + (-2)
+			wantTo:   13, // 3 + 10
+		},
+		{
+			name: "NonZeroAnchor",
+			reset: resetT{
+				window:   10,
+				slide:    0,
+				anchor:   1,
+				absolute: true,
+			},
+			anchors: []anchorT{
+				{clock: 5, term: 0, offset: 0},
+				{clock: 8, term: 1, offset: 0},
+				{clock: 12, term: 2, offset: 0},
+			},
+			wantFrom: 8,  // anchors[1].clock
+			wantTo:   18, // 8 + 10
+		},
+		{
+			name: "NonZeroAnchorWithSlideRelative",
+			reset: resetT{
+				window:   10,
+				slide:    5,
+				anchor:   2,
+				absolute: false,
+			},
+			anchors: []anchorT{
+				{clock: 2, term: 0, offset: 0},
+				{clock: 5, term: 1, offset: 0},
+				{clock: 8, term: 2, offset: 0},
+			},
+			wantFrom: 13, // 8 + 5
+			wantTo:   29, // 13 + 10 + (8-2)
+		},
+		{
+			name: "ZeroWindow",
+			reset: resetT{
+				window:   0,
+				slide:    0,
+				anchor:   0,
+				absolute: true,
+			},
+			anchors: []anchorT{
+				{clock: 5, term: 0, offset: 0},
+			},
+			wantFrom: 5,
+			wantTo:   5, // 5 + 0
+		},
+		{
+			name: "NegativeWindow",
+			reset: resetT{
+				window:   -5,
+				slide:    0,
+				anchor:   0,
+				absolute: true,
+			},
+			anchors: []anchorT{
+				{clock: 10, term: 0, offset: 0},
+			},
+			wantFrom: 10,
+			wantTo:   10, // negative window becomes 0
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if len(tt.anchors) > 0 && int(tt.reset.anchor) >= len(tt.anchors) {
+				// Skip invalid anchor tests
+				return
+			}
+
+			gotFrom, gotTo := tt.reset.calcWindowA(tt.anchors)
+			if gotFrom != tt.wantFrom {
+				t.Errorf("calcWindowA() gotFrom = %v, want %v", gotFrom, tt.wantFrom)
+			}
+			if gotTo != tt.wantTo {
+				t.Errorf("calcWindowA() gotTo = %v, want %v", gotTo, tt.wantTo)
+			}
+		})
+	}
+}
+
+func TestResetTCalcWindowEdgeCases(t *testing.T) {
+
+	t.Run("OutOfBoundsAnchorA", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("Expected panic for out of bounds anchor, but didn't panic")
+			}
+		}()
+
+		reset := resetT{
+			window:   10,
+			slide:    0,
+			anchor:   5, // Out of bounds
+			absolute: true,
+		}
+		anchors := []anchorT{
+			{clock: 1, term: 0, offset: 0},
+			{clock: 2, term: 1, offset: 0},
+		}
+		reset.calcWindowA(anchors)
+	})
+}

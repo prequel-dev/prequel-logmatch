@@ -3,8 +3,6 @@ package match
 import (
 	"testing"
 	"time"
-
-	"github.com/rs/zerolog"
 )
 
 func NewCasesSetResets() casesT {
@@ -785,9 +783,7 @@ func BenchmarkSetInverseMissesWithReset(b *testing.B) {
 }
 
 func BenchmarkSetInverseHitSequence(b *testing.B) {
-	level := zerolog.GlobalLevel()
-	zerolog.SetGlobalLevel(zerolog.Disabled)
-	defer zerolog.SetGlobalLevel(level)
+	defer disableLogs()()
 
 	sm, err := NewInverseSet(int64(time.Second), makeTermsA("frank", "burns"), nil)
 	if err != nil {
@@ -812,9 +808,7 @@ func BenchmarkSetInverseHitSequence(b *testing.B) {
 }
 
 func BenchmarkSetInverseHitOverlap(b *testing.B) {
-	level := zerolog.GlobalLevel()
-	zerolog.SetGlobalLevel(zerolog.Disabled)
-	defer zerolog.SetGlobalLevel(level)
+	defer disableLogs()()
 
 	sm, err := NewInverseSet(10, makeTermsA("frank", "burns"), []ResetT{{Term: makeRaw("reset1"), Window: 1, Absolute: true}})
 	if err != nil {
@@ -848,9 +842,7 @@ func BenchmarkSetInverseHitOverlap(b *testing.B) {
 }
 
 func BenchmarkSetInverseRunawayMatch(b *testing.B) {
-	level := zerolog.GlobalLevel()
-	zerolog.SetGlobalLevel(zerolog.Disabled)
-	defer zerolog.SetGlobalLevel(level)
+	defer disableLogs()()
 
 	sm, err := NewInverseSet(1000000, makeTermsA("frank", "burns"), nil)
 	if err != nil {

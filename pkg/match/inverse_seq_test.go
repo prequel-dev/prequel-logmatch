@@ -3,8 +3,6 @@ package match
 import (
 	"testing"
 	"time"
-
-	"github.com/rs/zerolog"
 )
 
 func NewCasesSeqResets() casesT {
@@ -435,38 +433,6 @@ func NewCasesSeqResets() casesT {
 			},
 		},
 
-		"DupesWithResetMissOnAnchor": {
-			// -123--------- alpha
-			// -123--------- alpha
-			// -123--------- alpha
-			// ----4-----6-- beta
-			// ---------5--- reset
-			window: 10,
-			terms: []string{
-				"alpha",
-				"alpha",
-				"alpha",
-				"beta",
-			},
-			reset: []ResetT{
-				{
-					Term:     makeRaw("reset"),
-					Window:   20,
-					Anchor:   2,
-					Absolute: true,
-				},
-			},
-			steps: []stepT{
-				{line: "alpha1"},
-				{line: "alpha2"},
-				{line: "alpha3"},
-				{line: "beta1"},
-				{line: "reset", stamp: 21},
-				{line: "beta2", stamp: 22},
-				{line: "noop", stamp: 1000},
-			},
-		},
-
 		"ResetsIgnoreOnNoMatch": {
 			window: 10,
 			terms:  []string{"alpha", "beta", "gamma"},
@@ -517,51 +483,104 @@ func NewCasesSeqResets() casesT {
 			},
 		},
 
-		"ResetDupesWithAnchorFire": {
+		"ResetDupesWithAnchorFireZeroTerm": {
 			window: 5,
 			terms:  []string{"alpha", "alpha", "alpha"},
 			reset: []ResetT{
 				{
 					Term:   makeRaw("reset"),
-					Anchor: 2,
+					Anchor: 0,
 				},
 			},
 			steps: []stepT{
 				{line: "alpha1"},
 				{line: "alpha2"},
 				{line: "alpha3"},
-				{line: "nope4"}, // Shouldn't fire yet. Reset anchor is on line 2. So reset range is 3 + 3-1 == 5)
-				{line: "nope5"}, // Not yet my friend
-				{line: "nope6", cb: matchStamps(1, 2, 3)}, // Fire on stamp 6 >  reset window 2-5
-				{line: "alpha7"}, // Normally {2,3,7} would fire, but must wait for anchor at {7, 7+7-2==12}
-				{line: "alpha8"}, // Normally 3,7,8 would fire, but must wait for {3, 8+8-3==13}
-				{line: "alpha12", stamp: 13, cb: matchStamps(2, 3, 7)},
-				{line: "nope14", stamp: 14, cb: matchStamps(3, 7, 8)},
+				{line: "nope4", cb: matchStamps(1, 2, 3)}, // should fire on no reset
 			},
 		},
 
-		"ResetDupesWithAnchorMiss": {
-			window: 5,
-			terms:  []string{"alpha", "alpha", "alpha"},
-			reset: []ResetT{
-				{
-					Term:   makeRaw("reset"),
-					Anchor: 2,
-				},
-			},
-			steps: []stepT{
-				{line: "alpha1"},
-				{line: "alpha2"},
-				{line: "alpha3"},
-				{line: "nope4"},  // Shouldn't fire yet. Reset anchor is on line 2. So reset range is 3 + 3-1 == 5)
-				{line: "reset5"}, // Reset at stamp 5 will deny {1,2,3}
-				{line: "nope6"},  // No fire, but 2,3,7 still active
-				{line: "alpha7"}, // Normally {2,3,7} would fire, but must wait for anchor at {7, 7+7-2==12}
-				{line: "alpha8"}, // Normally 3,7,8 would fire, but must wait for {3, 8+8-3==13}
-				{line: "alpha12", stamp: 13, cb: matchStamps(2, 3, 7)},
-				{line: "nope14", stamp: 14, cb: matchStamps(3, 7, 8)},
-			},
-		},
+		// // Disabled test; non-zero anchors on dupe terms not supported.
+		// "ResetDupesWithAnchorFire": {
+		// 	window: 5,
+		// 	terms:  []string{"alpha", "alpha", "alpha"},
+		// 	reset: []ResetT{
+		// 		{
+		// 			Term:   makeRaw("reset"),
+		// 			Anchor: 2,
+		// 		},
+		// 	},
+		// 	steps: []stepT{
+		// 		{line: "alpha1"},
+		// 		{line: "alpha2"},
+		// 		{line: "alpha3"},
+		// 		{line: "nope4"}, // Shouldn't fire yet. Reset anchor is on line 2. So reset range is 3 + 3-1 == 5)
+		// 		{line: "nope5"}, // Not yet my friend
+		// 		{line: "nope6", cb: matchStamps(1, 2, 3)}, // Fire on stamp 6 >  reset window 2-5
+		// 		{line: "alpha7"},             // No fire, only 7
+		// 		{line: "alpha8"},             // No Fire only (7,9)
+		// 		{line: "alpha12", stamp: 12}, // No fire reset range is 12 + 12-7 == 17
+		// 		{line: "nope17", stamp: 17},
+		// 		{line: "nope18", stamp: 18, cb: matchStamps(7, 8, 12)},
+		// 	},
+		// },
+
+		// // Disabled test; non-zero anchors on dupe terms not supported.
+		// "ResetDupesWithAnchorMiss": {
+		// 	window: 5,
+		// 	terms:  []string{"alpha", "alpha", "alpha"},
+		// 	reset: []ResetT{
+		// 		{
+		// 			Term:   makeRaw("reset"),
+		// 			Anchor: 2,
+		// 		},
+		// 	},
+		// 	steps: []stepT{
+		// 		{line: "alpha1"},
+		// 		{line: "alpha2"},
+		// 		{line: "alpha3"},
+		// 		{line: "nope4"},  // Shouldn't fire yet. Reset anchor is on line 2. So reset range is 3 + 3-1 == 5)
+		// 		{line: "reset5"}, // Reset at stamp 5 will deny {1,2,3}
+		// 		{line: "nope6"},  // No fire, but 2,3,7 still active
+		// 		{line: "alpha7"}, // Normally {2,3,7} would fire, but must wait for anchor at {7, 7+7-2==12}
+		// 		{line: "alpha8"}, // Normally 3,7,8 would fire, but must wait for {3, 8+8-3==13}
+		// 		{line: "alpha12", stamp: 13, cb: matchStamps(2, 3, 7)},
+		// 		{line: "nope14", stamp: 14, cb: matchStamps(3, 7, 8)},
+		// 	},
+		// },
+
+		// // Disabled: Unsuported due to non-zero anchor on dupe term
+		// "DupesWithResetMissOnAnchor": {
+		// 	// -123--------- alpha
+		// 	// -123--------- alpha
+		// 	// -123--------- alpha
+		// 	// ----4-----6-- beta
+		// 	// ---------5--- reset
+		// 	window: 10,
+		// 	terms: []string{
+		// 		"alpha",
+		// 		"alpha",
+		// 		"alpha",
+		// 		"beta",
+		// 	},
+		// 	reset: []ResetT{
+		// 		{
+		// 			Term:     makeRaw("reset"),
+		// 			Window:   20,
+		// 			Anchor:   2,
+		// 			Absolute: true,
+		// 		},
+		// 	},
+		// 	steps: []stepT{
+		// 		{line: "alpha1"},
+		// 		{line: "alpha2"},
+		// 		{line: "alpha3"},
+		// 		{line: "beta1"},
+		// 		{line: "reset", stamp: 21},
+		// 		{line: "beta2", stamp: 22},
+		// 		{line: "noop", stamp: 1000},
+		// 	},
+		// },
 	}
 }
 
@@ -641,7 +660,7 @@ func TestInverseSeqInitFail(t *testing.T) {
 		},
 
 		"DupeShouldNotPushOverMax": {
-			err:    ErrTooManyTerms, // Not supported yet on InversetSeq
+			err:    nil,
 			window: 10,
 			terms:  makeDupesN(maxTerms * 2),
 		},
@@ -650,6 +669,30 @@ func TestInverseSeqInitFail(t *testing.T) {
 			err:    ErrTooManyTerms,
 			window: 10,
 			terms:  makeTermsN(maxTerms + 1),
+		},
+
+		"ZeroAnchorOnDupeTerm": {
+			err:    nil,
+			window: 10,
+			terms:  makeTermsA("shrubbery", "alpha", "alpha"),
+			reset: []ResetT{
+				{
+					Term:   makeRaw("reset"),
+					Anchor: 1,
+				},
+			},
+		},
+
+		"NonZeroAnchorOnDupeTerm": {
+			err:    ErrAnchorNoDupes,
+			window: 10,
+			terms:  makeTermsA("shrubbery", "alpha", "alpha"),
+			reset: []ResetT{
+				{
+					Term:   makeRaw("reset"),
+					Anchor: 2,
+				},
+			},
 		},
 	}
 
@@ -661,6 +704,122 @@ func TestInverseSeqInitFail(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMaybeAnchor(t *testing.T) {
+	tests := []struct {
+		name     string
+		nTerms   int
+		dupeMap  map[int]int
+		anchor   uint8
+		expected bool
+	}{
+		{
+			name:     "NilDupeMapShouldReturnTrue",
+			nTerms:   3,
+			dupeMap:  nil,
+			anchor:   1,
+			expected: true,
+		},
+		{
+			name:     "ZeroAnchorShouldReturnTrue",
+			nTerms:   3,
+			dupeMap:  map[int]int{0: 2, 1: 1},
+			anchor:   0,
+			expected: true,
+		},
+		{
+			name:     "AnchorBeforeDupesShouldReturnTrue",
+			nTerms:   4,
+			dupeMap:  map[int]int{2: 2}, // term 2 has 2 dupes
+			anchor:   1,                 // anchor on term 1, before dupes
+			expected: true,
+		},
+		{
+			name:     "AnchorOnFirstTermBeforeDupesShouldReturnTrue",
+			nTerms:   3,
+			dupeMap:  map[int]int{1: 2}, // term 1 has 2 dupes
+			anchor:   0,                 // anchor on term 0, before dupes
+			expected: true,
+		},
+		{
+			name:     "AnchorWithinDupesShouldReturnFalse",
+			nTerms:   4,
+			dupeMap:  map[int]int{1: 3}, // term 1 has 3 dupes (positions 1,2,3,4)
+			anchor:   2,                 // anchor within the dupe range
+			expected: false,
+		},
+		{
+			name:     "AnchorOnLastDupePositionShouldReturnFalse",
+			nTerms:   5,
+			dupeMap:  map[int]int{1: 2}, // term 1 has 2 dupes (positions 1,2,3)
+			anchor:   3,                 // anchor on last dupe position
+			expected: false,
+		},
+		{
+			name:     "AnchorAfterAllDupesShouldReturnTrue",
+			nTerms:   5,
+			dupeMap:  map[int]int{1: 2}, // term 1 has 2 dupes (positions 1,2,3)
+			anchor:   4,                 // anchor after all dupes
+			expected: true,
+		},
+		{
+			name:     "MultipleDupeGroupsAnchorBeforeAllShouldReturnTrue",
+			nTerms:   7,
+			dupeMap:  map[int]int{1: 2, 4: 1}, // term 1 has 2 dupes, term 4 has 1 dupe
+			anchor:   1,                       // anchor front first dupes
+			expected: true,
+		},
+		{
+			name:     "MultipleDupeGroupsAnchorInFirstGroupShouldReturnFalse",
+			nTerms:   7,
+			dupeMap:  map[int]int{1: 2, 5: 1}, // term 1 has 2 dupes (1,2,3), term 5 has 1 dupe (7,8)
+			anchor:   2,                       // anchor within first dupe group
+			expected: false,
+		},
+		{
+			name:     "MultipleDupeGroupsAnchorInSecondGroupShouldReturnFalse",
+			nTerms:   7,
+			dupeMap:  map[int]int{1: 2, 5: 1}, // term 1 has 2 dupes (1,2,3), term 5 has 1 dupe (7,8)
+			anchor:   8,                       // anchor within second dupe group
+			expected: false,
+		},
+		{
+			name:     "MultipleDupeGroupsAnchorBetweenGroupsShouldReturnTrue",
+			nTerms:   7,
+			dupeMap:  map[int]int{1: 2, 5: 1}, // term 1 has 2 dupes (1,2,3), term 5 has 1 dupe (7,8)
+			anchor:   4,                       // anchor between dupe groups
+			expected: true,
+		},
+		{
+			name:     "LargeAnchorAfterAllTermsShouldReturnFalse",
+			nTerms:   3,
+			dupeMap:  map[int]int{1: 1},
+			anchor:   10, // anchor way beyond all terms
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := maybeAnchor(tt.nTerms, tt.dupeMap, tt.anchor)
+			if result != tt.expected {
+				t.Errorf("maybeAnchor(%d, %v, %d) = %v, expected %v",
+					tt.nTerms, tt.dupeMap, tt.anchor, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestEvalBadClock(t *testing.T) {
+	sm, err := NewInverseSeq(1000, makeTermsA("frank", "burns"), nil)
+	if err != nil {
+		t.Fatalf("Expected err == nil, got %v", err)
+	}
+
+	sm.Eval(1000)
+	sm.Eval(500) // ignore eval in  the past.
+
 }
 
 // // --------------------
@@ -705,9 +864,7 @@ func BenchmarkSeqInverseMissesWithReset(b *testing.B) {
 }
 
 func BenchmarkSeqInverseHitSequence(b *testing.B) {
-	level := zerolog.GlobalLevel()
-	zerolog.SetGlobalLevel(zerolog.Disabled)
-	defer zerolog.SetGlobalLevel(level)
+	defer disableLogs()()
 
 	sm, err := NewInverseSeq(int64(time.Second), makeTermsA("frank", "burns"), nil)
 	if err != nil {
@@ -732,9 +889,7 @@ func BenchmarkSeqInverseHitSequence(b *testing.B) {
 }
 
 func BenchmarkSeqInverseHitOverlap(b *testing.B) {
-	level := zerolog.GlobalLevel()
-	zerolog.SetGlobalLevel(zerolog.Disabled)
-	defer zerolog.SetGlobalLevel(level)
+	defer disableLogs()()
 
 	sm, err := NewInverseSeq(10, makeTermsA("frank", "burns"), nil)
 	if err != nil {
@@ -768,9 +923,7 @@ func BenchmarkSeqInverseHitOverlap(b *testing.B) {
 }
 
 func BenchmarkSeqInverseRunawayMatch(b *testing.B) {
-	level := zerolog.GlobalLevel()
-	zerolog.SetGlobalLevel(zerolog.Disabled)
-	defer zerolog.SetGlobalLevel(level)
+	defer disableLogs()()
 
 	sm, err := NewInverseSeq(1000000, makeTermsA("frank", "burns"), nil)
 	if err != nil {
@@ -785,5 +938,99 @@ func BenchmarkSeqInverseRunawayMatch(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		ev1.Timestamp += 1
 		sm.Scan(ev1)
+	}
+}
+
+func BenchmarkSeqInverseDupes(b *testing.B) {
+	defer disableLogs()()
+
+	sm, err := NewInverseSeq(1000000, makeTermsA("shrubbery", "frank", "frank", "frank", "frank", "frank", "frank"), nil)
+	if err != nil {
+		b.Fatalf("Expected err == nil, got %v", err)
+	}
+
+	var (
+		clock int64
+		ev1   = LogEntry{Line: "Bring me a shrubbery"}
+		ev2   = LogEntry{Line: "Let's be frank"}
+	)
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		clock++
+		ev1.Timestamp = clock
+		sm.Scan(ev1)
+
+		clock++
+		ev2.Timestamp = clock
+		sm.Scan(ev2)
+
+		clock++
+		ev1.Timestamp = clock
+		sm.Scan(ev1)
+
+		clock++
+		ev2.Timestamp = clock
+		sm.Scan(ev2)
+
+		clock++
+		ev1.Timestamp = clock
+		sm.Scan(ev1)
+
+		clock++
+		ev2.Timestamp = clock
+		sm.Scan(ev2)
+
+	}
+}
+
+func BenchmarkSeqInverseDupesWithResets(b *testing.B) {
+	defer disableLogs()()
+
+	resets := []ResetT{
+		{
+			Term:     makeRaw("badterm"),
+			Window:   1000,
+			Absolute: true,
+		},
+	}
+
+	sm, err := NewInverseSeq(1000000, makeTermsA("shrubbery", "frank", "frank", "frank", "frank", "frank", "frank"), resets)
+	if err != nil {
+		b.Fatalf("Expected err == nil, got %v", err)
+	}
+
+	var (
+		clock int64
+		ev1   = LogEntry{Line: "Bring me a shrubbery"}
+		ev2   = LogEntry{Line: "Let's be frank"}
+	)
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		clock++
+		ev1.Timestamp = clock
+		sm.Scan(ev1)
+
+		clock++
+		ev2.Timestamp = clock
+		sm.Scan(ev2)
+
+		clock++
+		ev1.Timestamp = clock
+		sm.Scan(ev1)
+
+		clock++
+		ev2.Timestamp = clock
+		sm.Scan(ev2)
+
+		clock++
+		ev1.Timestamp = clock
+		sm.Scan(ev1)
+
+		clock++
+		ev2.Timestamp = clock
+		sm.Scan(ev2)
+
 	}
 }

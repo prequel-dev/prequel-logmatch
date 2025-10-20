@@ -168,6 +168,7 @@ func buildSetTerms(setTerms ...TermT) ([]termT, map[int]int, error) {
 	var (
 		i       int
 		nTerms  = len(setTerms)
+		dupeSum int
 		dupeMap map[int]int
 		uniqs   = make(map[TermT]int, nTerms)
 		terms   = make([]termT, 0, nTerms)
@@ -181,6 +182,7 @@ func buildSetTerms(setTerms ...TermT) ([]termT, map[int]int, error) {
 				dupeMap = make(map[int]int)
 			}
 			dupeMap[idx]++
+			dupeSum++
 		} else {
 			m, err := term.NewMatcher()
 			if err != nil {
@@ -194,6 +196,11 @@ func buildSetTerms(setTerms ...TermT) ([]termT, map[int]int, error) {
 
 	if len(terms) > maxTerms {
 		return nil, nil, ErrTooManyTerms
+	}
+
+	// Cache sumDupes in dupeMap with key -1
+	if dupeSum > 0 {
+		dupeMap[-1] = dupeSum
 	}
 
 	// Check if over allocated due to dupes

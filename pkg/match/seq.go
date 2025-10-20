@@ -90,15 +90,15 @@ func (r *MatchSeq) Scan(e LogEntry) (hits Hits) {
 		hits.Logs = append(hits.Logs, r.terms[i].asserts[:hitCnt]...)
 
 		// Only remove the first item; leave remaining dupes for next match.
-		shiftLeft(r.terms, i, 1)
+		shiftLeft(r.terms, i, hitCnt)
 	}
 
 	// Append any dupes for the final term
 	if dupeCnt > 0 {
 		hits.Logs = append(hits.Logs, r.terms[r.nActive].asserts[0:dupeCnt]...)
 
-		// Only remove the first item; leave remaining dupes for next match.
-		shiftLeft(r.terms, r.nActive, 1)
+		// Remove all items
+		shiftLeft(r.terms, r.nActive, dupeCnt)
 	}
 
 	// And the final event that triggered this hit
@@ -229,8 +229,8 @@ func buildSeqTerms(seqTerms ...TermT) ([]termT, map[int]int, error) {
 	var (
 		i        = -1
 		lastTerm TermT
-		dupeMap  map[int]int
 		dupeSum  int
+		dupeMap  map[int]int
 		nTerms   = len(seqTerms)
 		terms    = make([]termT, 0, nTerms)
 	)
