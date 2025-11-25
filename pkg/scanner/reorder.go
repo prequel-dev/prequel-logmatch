@@ -104,6 +104,10 @@ func (r *ReorderT) Append(entry LogEntry) (done bool) {
 	return
 }
 
+func (r *ReorderT) Pending() bool {
+	return !r.inList.empty() || !r.ooList.empty()
+}
+
 func (r *ReorderT) _append(entry LogEntry) bool {
 
 	// Check entry is out of order
