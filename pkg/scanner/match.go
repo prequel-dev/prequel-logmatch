@@ -185,7 +185,7 @@ func normalize(exprs []ExprT) []mfuncT {
 	// Convert the qualified filter list into functions
 	mFuncs := make([]mfuncT, 0, len(dexprs))
 	for _, v := range dexprs {
-		log.Info().
+		log.Trace().
 			Bool("enrich", v.enrich).
 			Str("regex", v.exp.RegEx.String()).
 			Int("mode", int(v.exp.Mode)).
