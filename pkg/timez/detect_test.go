@@ -106,7 +106,7 @@ func TestDetectFormatUsesDefaultsSamples(t *testing.T) {
 	// For each default spec, craft a sample log line that should
 	// match its pattern and ensure DetectFormat can find a format
 	// and the correct timestamp value. Samples are based on the
-	// examples in discover.go comments and are ordered to match
+	// examples in detect.go comments and are ordered to match
 	// the Defaults slice.
 	tests := []struct {
 		name  string
@@ -124,9 +124,9 @@ func TestDetectFormatUsesDefaultsSamples(t *testing.T) {
 			"2024-11-05T09:08:07Z info message",
 		},
 		{
-			"slash_datetime_12hr",
-			1730797687000000000,
-			"2024/11/05 09:08:07 info",
+			"strimzi_kafka_topic_operator",
+			1747498152465700000,
+			"2025-05-17 16:09:12,46570 WARN  [vertx-blocked-thread-checker] BlockedThreadChecker: ",
 		},
 		{
 			"iso_8601_tz_micros",

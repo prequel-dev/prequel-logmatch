@@ -162,8 +162,12 @@ func TryTimestampFormat(exp string, fmtStr TimestampFmt, buf []byte, maxTries in
 		return nil, 0, err
 	}
 
-	f := factory.New()
-	ts, err = f.ReadTimestamp(bytes.NewReader(buf))
+	var (
+		f   = factory.New()
+		rdr = bytes.NewReader(buf)
+	)
+
+	ts, err = f.ReadTimestamp(rdr)
 
 	tries := 0
 	for (err != nil || ts == 0) && tries < maxTries {
@@ -171,7 +175,8 @@ func TryTimestampFormat(exp string, fmtStr TimestampFmt, buf []byte, maxTries in
 		tries += 1
 		if index := bytes.IndexByte(buf, '\n'); index != -1 {
 			buf = buf[index+1:]
-			ts, err = f.ReadTimestamp(bytes.NewReader(buf))
+			rdr.Reset(buf)
+			ts, err = f.ReadTimestamp(rdr)
 		} else {
 			break
 		}

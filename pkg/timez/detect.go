@@ -15,7 +15,7 @@ const (
 	detectSampleSize = 16 * 1024
 )
 
-// Note: order matters particularly when matching similiar patterns
+// Note: order matters particularly when matching similar patterns
 // Put the more specific variations before the more general.
 
 var Defaults = []FmtSpec{
@@ -31,10 +31,11 @@ var Defaults = []FmtSpec{
 		Pattern: `^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+\-]\d{2}:\d{2})) `,
 	},
 
-	// Example: 2006/01/02 03:04:05 <log message>
+	// Example: 2025-05-17 16:09:12,46570 WARN  [vertx-blocked-thread-checker] BlockedThreadChecker: - Thread Thread[blocking-startup-ops-0,5,main] has been blocked for 60597 ms, time limit is 60000 ms
+	// Source: Strimzi Kafka Topic Operator
 	{
-		Format:  TimestampFmt("2006/01/02 03:04:05"),
-		Pattern: `^(\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}) `,
+		Format:  TimestampFmt("2006-01-02 15:04:05,00000"),
+		Pattern: `^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{5}) `,
 	},
 
 	// Example: 2006-01-02 15:04:05.000000-0700 <log message>
@@ -184,7 +185,7 @@ var Defaults = []FmtSpec{
 	},
 
 	// Example: {"TimeCreated":"\/Date(1743448267142)\/"}
-	// Source; Windows events via Get-Events w/ JSON output
+	// Source: Windows events via Get-Events w/ JSON output
 	{
 		Format:  FmtEpochAny,
 		Pattern: `/Date\((\d+)\)`,
