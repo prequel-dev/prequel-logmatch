@@ -87,19 +87,7 @@ func epochAny(m []byte) (int64, error) {
 		return 0, ErrInvalidTimestampFormat
 	}
 
-	sz := len(m)
-	switch {
-	case sz > 16:
-		// NOOP: v *= int64(time.Nanosecond)
-	case sz > 13:
-		v *= int64(time.Microsecond)
-	case sz > 10:
-		v *= int64(time.Millisecond)
-	default:
-		v *= int64(time.Second)
-	}
-	return v, nil
-
+	return ToUnixNano(v), nil
 }
 
 func dotNotation(m []byte) (int64, error) {
@@ -202,4 +190,50 @@ func TryTimestampFormats(specs []FmtSpec, data []byte, maxTries int) (factory fo
 	}
 
 	return
+}
+
+const (
+	maxSecondsToInt64      = 9_223_372_036
+	maxMillisecondsToInt64 = 9_223_372_036_854
+	maxMicrosecondsToInt64 = 9_223_372_036_854_775
+
+	multiplesOfSecondsToInt64      = 1_000_000_000
+	multiplesOfMillisecondsToInt64 = 1_000_000
+	multiplesOfMicrosecondsToInt64 = 1_000
+)
+
+// ToUnixNano converts an int64 timestamp of unknown magnitude to nanoseconds.
+// Heuristic: uses the range of maximum int64 values for seconds, milliseconds,
+// and microseconds to infer the likely unit of the input timestamp
+// and converts to nanoseconds accordingly.
+func ToUnixNano(ts int64) int64 {
+	a := ts
+	if a < 0 {
+		if a = -a; a < 0 {
+			// handle negative overflow case where -math.MinInt64 == math.MinInt64
+			return ts
+		}
+	}
+
+	switch {
+	// nanoseconds;
+	// [1970-04-17T18:02:52.036854776Z, 2262-04-11T23:47:16.854775807Z]
+	case a > maxMicrosecondsToInt64:
+		return ts
+
+	// microseconds;
+	// [1970-04-17T18:02:52.036855Z, 2262-04-11T23:47:16.854775Z]
+	case a > maxMillisecondsToInt64:
+		return ts * multiplesOfMicrosecondsToInt64
+
+	// milliseconds;
+	// [1970-04-17T18:02:52.037Z, 2262-04-11T23:47:16.854Z]
+	case a > maxSecondsToInt64:
+		return ts * multiplesOfMillisecondsToInt64
+
+	// seconds;
+	// [1970-01-01T00:00:00Z, 2262-04-11T23:47:16Z]
+	default:
+		return ts * multiplesOfSecondsToInt64
+	}
 }
