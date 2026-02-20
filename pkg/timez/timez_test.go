@@ -2,6 +2,8 @@ package timez
 
 import (
 	"errors"
+	"math"
+	"math/big"
 	"testing"
 	"time"
 )
@@ -78,10 +80,12 @@ func TestEpochAnyUnitsAndErrors(t *testing.T) {
 		input string
 		want  int64
 	}{
+		{"zero", "0", 0},
 		{"seconds", "1000", 1000 * int64(time.Second)},
 		{"millis", "12345678901", 12345678901 * int64(time.Millisecond)},
 		{"micros", "12345678901234", 12345678901234 * int64(time.Microsecond)},
 		{"nanos", "1234567890123456789", 1234567890123456789},
+		{"maxInt", "9223372036854775807", 9223372036854775807},
 	}
 
 	for _, tc := range tests {
@@ -98,6 +102,11 @@ func TestEpochAnyUnitsAndErrors(t *testing.T) {
 
 	if _, err := cb([]byte("not-a-number")); !errors.Is(err, ErrInvalidTimestampFormat) {
 		t.Fatalf("expected ErrInvalidTimestampFormat, got %v", err)
+	}
+
+	// overflow
+	if _, err := cb([]byte("9223372036854775808")); !errors.Is(err, ErrInvalidTimestampFormat) {
+		t.Fatalf("expected ErrInvalidTimestampFormat for overflow, got %v", err)
 	}
 }
 
@@ -324,6 +333,106 @@ func TestDotNotation(t *testing.T) {
 			}
 			if got != tc.want {
 				t.Fatalf("dotNotation(%q) = %d, want %d", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestToUnixNano(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    int64
+		expected int64
+	}{
+		// Seconds
+		{"seconds epoch", 0, 0},
+		{"seconds 1", 1, 1_000_000_000},
+		{"seconds 1234567890", 1234567890, 1234567890_000_000_000},
+		{"seconds negative", -1, -1_000_000_000},
+		{"seconds negative min", -maxSecondsToInt64, -maxSecondsToInt64 * multiplesOfSecondsToInt64},
+		{"seconds max", maxSecondsToInt64, maxSecondsToInt64 * multiplesOfSecondsToInt64},
+
+		// Milliseconds
+		{"milliseconds min", maxSecondsToInt64 + 1, (maxSecondsToInt64 + 1) * multiplesOfMillisecondsToInt64},
+		{"milliseconds negative max", -(maxSecondsToInt64 + 1), -(maxSecondsToInt64 + 1) * multiplesOfMillisecondsToInt64},
+		{"milliseconds 100_000_000_000", 100_000_000_000, 100_000_000_000 * multiplesOfMillisecondsToInt64},
+		{"milliseconds negative", -100_000_000_000, -100_000_000_000 * multiplesOfMillisecondsToInt64},
+		{"milliseconds max", maxMillisecondsToInt64, maxMillisecondsToInt64 * multiplesOfMillisecondsToInt64},
+
+		// Microseconds
+		{"microseconds min", maxMillisecondsToInt64 + 1, (maxMillisecondsToInt64 + 1) * multiplesOfMicrosecondsToInt64},
+		{"microseconds negative max", -(maxMillisecondsToInt64 + 1), -(maxMillisecondsToInt64 + 1) * multiplesOfMicrosecondsToInt64},
+		{"microseconds 100_000_000_000_000", 100_000_000_000_000, 100_000_000_000_000 * multiplesOfMicrosecondsToInt64},
+		{"microseconds negative", -100_000_000_000_000, -100_000_000_000_000 * multiplesOfMicrosecondsToInt64},
+		{"microseconds max", maxMicrosecondsToInt64, maxMicrosecondsToInt64 * multiplesOfMicrosecondsToInt64},
+
+		// Nanoseconds
+		{"nanoseconds min", maxMicrosecondsToInt64 + 1, (maxMicrosecondsToInt64 + 1)},
+		{"nanoseconds negative max", -(maxMicrosecondsToInt64 + 1), -(maxMicrosecondsToInt64 + 1)},
+		{"nanoseconds 100_000_000_000_000_000", 100_000_000_000_000_000, 100_000_000_000_000_000},
+		{"nanoseconds negative", -100_000_000_000_000_000, -100_000_000_000_000_000},
+
+		// Edge cases
+		{"max int64 - 1", math.MaxInt64 - 1, math.MaxInt64 - 1},
+		{"min int64 + 1", math.MinInt64 + 1, math.MinInt64 + 1},
+		{"max int64", math.MaxInt64, math.MaxInt64},
+		{"min int64", math.MinInt64, math.MinInt64},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ToUnixNano(tt.input)
+			if result != tt.expected {
+				t.Errorf("ToUnixNano(%d) = %d, want %d", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestMaxToInt64MultiplicationOverflow(t *testing.T) {
+
+	// Validate that the constants and multipliers used in ToUnixNano do not cause overflow when multiplied,
+	// which would break the heuristic logic.  Demonstrate that the values are on the edge of the limits
+	// by incrementing past the limits and validating that the overflow occurs as expected.
+
+	type test struct {
+		name       string
+		value      int64
+		multiplier int64
+		overflow   bool
+	}
+	tests := []test{
+		{"seconds", maxSecondsToInt64, multiplesOfSecondsToInt64, false},
+		{"seconds negative", -maxSecondsToInt64, multiplesOfSecondsToInt64, false},
+		{"milliseconds", maxMillisecondsToInt64, multiplesOfMillisecondsToInt64, false},
+		{"milliseconds negative", -maxMillisecondsToInt64, multiplesOfMillisecondsToInt64, false},
+		{"microseconds", maxMicrosecondsToInt64, multiplesOfMicrosecondsToInt64, false},
+		{"microseconds negative", -maxMicrosecondsToInt64, multiplesOfMicrosecondsToInt64, false},
+		{"seconds_overflow", maxSecondsToInt64 + 1, multiplesOfSecondsToInt64, true},
+		{"seconds_negative_overflow", -(maxSecondsToInt64 + 1), multiplesOfSecondsToInt64, true},
+		{"milliseconds_overflow", maxMillisecondsToInt64 + 1, multiplesOfMillisecondsToInt64, true},
+		{"milliseconds_negative_overflow", -(maxMillisecondsToInt64 + 1), multiplesOfMillisecondsToInt64, true},
+		{"microseconds_overflow", maxMicrosecondsToInt64 + 1, multiplesOfMicrosecondsToInt64, true},
+		{"microseconds_negative_overflow", -(maxMicrosecondsToInt64 + 1), multiplesOfMicrosecondsToInt64, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Use big.Int to check for overflow
+			var (
+				bigResult = new(big.Int).Mul(big.NewInt(tt.value), big.NewInt(tt.multiplier))
+				fits      = bigResult.IsInt64()
+			)
+
+			switch {
+			case !tt.overflow && fits:
+				// expected to fit and does fit, test passes
+			case !tt.overflow && !fits:
+				t.Errorf("Expected no overflow for %s: %d * %d = %s does not fit in int64, but should fit", tt.name, tt.value, tt.multiplier, bigResult.String())
+			case tt.overflow && fits:
+				t.Errorf("Expected overflow for %s: %d * %d = %s fits in int64, but should overflow", tt.name, tt.value, tt.multiplier, bigResult.String())
+			default:
+				// expected to overflow and does overflow, test passes
 			}
 		})
 	}
