@@ -9,7 +9,10 @@ import (
 	"github.com/prequel-dev/prequel-logmatch/internal/pkg/pool"
 )
 
-const defaultLineSize = 2048
+const (
+	defaultLineSize  = 2048
+	defaultMungeSlop = time.Hour * 24 * 7
+)
 
 type TimeFormatCbT func(m []byte) (int64, error)
 
@@ -122,30 +125,56 @@ func (f *regexFmtT) ReadEntry(data []byte) (entry LogEntry, err error) {
 	return
 }
 
-// Year was not specified in the time format.
-// Assume this year unless the time in in the future,
-// in which case assume the previous year.
-
+// Munge the year to be the closest to now, but not more than futureSlop in the future.
 func mungeYear(now, t time.Time) int64 {
-	var (
-		dstYear  = now.Year()
-		nowMonth = now.Month()
-		tsMonth  = t.Month()
-	)
+	return mungeYearWithSlop(now, t, defaultMungeSlop)
+}
 
-	// If the timestamp month is in the future, then assume the year is the previous year.
-	// We will do this calculation to month resolution, and add in some slop tolerance.
-	// Could be more precise if necessary, but most logs that do not specify a year are short lived.
-	switch {
-	case tsMonth == nowMonth:
-		// Normal case; the timestamp refers to this year.
-	case tsMonth < nowMonth:
-		// Timestamp from a previous month assume this year.
-	case tsMonth > nowMonth && tsMonth-nowMonth > 1:
-		// More than 11 months in the future is considered last year
-		dstYear -= 1
+// mungeYearWithSlop assigns a year to a timestamp `t` that has no year specified.
+// It chooses the closest year to `now`, allowing the resulting time to be up to `futureSlop`
+// in the future relative to `now`.
+//
+// Behavior:
+//   - Interpret `t` using the same month, day, and time, but choose a year that makes it
+//     as close as possible to `now`, while not placing it more than `futureSlop` into the future.
+//   - If choosing the current year would put `t` more than `futureSlop` ahead of `now`,
+//     the year is adjusted (e.g. to the previous or next year) to satisfy this constraint.
+//   - A negative `futureSlop` will cause a panic.
+//
+// Example:
+//
+//	now        = Dec 31, 2026 23:00
+//	t          = Jan 6 10:00        // no year specified
+//	futureSlop = 7*24*time.Hour
+//	→ returns Jan 6, 2027 10:00
+func mungeYearWithSlop(now, t time.Time, futureSlop time.Duration) int64 {
+	if futureSlop < 0 {
+		panic("futureSlop cannot be negative")
 	}
 
-	nTime := time.Date(dstYear, tsMonth, t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), time.UTC)
-	return nTime.UnixNano()
+	// Compute the reference time including slop
+	nowWithSlop := now.Add(futureSlop).UTC()
+
+	// Force UTC
+	t = t.UTC()
+
+	// Build candidate timestamp using the year of nowWithSlop
+	candidate := time.Date(
+		nowWithSlop.Year(),
+		t.Month(),
+		t.Day(),
+		t.Hour(),
+		t.Minute(),
+		t.Second(),
+		t.Nanosecond(),
+		time.UTC,
+	)
+
+	// Adjust candidate if it falls outside the allowed window
+	// Positive slop: timestamps too far in the future belong to last year
+	if candidate.After(nowWithSlop) {
+		candidate = candidate.AddDate(-1, 0, 0)
+	}
+
+	return candidate.UTC().UnixNano()
 }

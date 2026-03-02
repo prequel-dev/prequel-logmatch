@@ -61,14 +61,14 @@ var Defaults = []FmtSpec{
 	// Example: Apr 30 23:36:47.715984 WRN <log message>
 	// Source: RFC 3164 extended
 	{
-		Format:  TimestampFmt("Jan 2 15:04:05.000000"),
+		Format:  TimestampFmt("Jan _2 15:04:05.000000"),
 		Pattern: `^([A-Z][a-z]{2}\s{1,2}\d{1,2}\s\d{2}:\d{2}:\d{2}\.\d{6}) `,
 	},
 
-	// Example: Jan 2 15:04:05 <log message>
+	// Example: Jan  2 15:04:05 <log message>
 	// Source: RFC 3164
 	{
-		Format:  TimestampFmt("Jan 2 15:04:05"),
+		Format:  TimestampFmt("Jan _2 15:04:05"),
 		Pattern: `^([A-Z][a-z]{2}\s{1,2}\d{1,2}\s\d{2}:\d{2}:\d{2}) `,
 	},
 

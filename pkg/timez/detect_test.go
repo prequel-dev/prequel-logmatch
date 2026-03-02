@@ -5,6 +5,7 @@ import (
 	"errors"
 	"regexp"
 	"testing"
+	"time"
 )
 
 type errReader struct{}
@@ -266,7 +267,9 @@ func TestDetectFormatUsesDefaultsSamples(t *testing.T) {
 				t.Fatal("expected non-nil factory")
 			}
 			if stamp != tc.stamp {
-				t.Fatalf("timestamp mismatch: expected %d got %d", tc.stamp, stamp)
+				sExpected := time.Unix(0, tc.stamp).UTC().Format(time.RFC3339Nano)
+				sGot := time.Unix(0, stamp).UTC().Format(time.RFC3339Nano)
+				t.Fatalf("timestamp mismatch: expected %d(%s) got %d(%s)", tc.stamp, sExpected, stamp, sGot)
 			}
 		})
 	}
