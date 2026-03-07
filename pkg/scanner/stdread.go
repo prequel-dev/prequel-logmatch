@@ -3,27 +3,39 @@ package scanner
 const avgLogSize = 256
 
 type StdReadScan struct {
-	Sz    int
-	MaxSz int
-	Clip  bool
-	Logs  []LogEntry
+	sz    int
+	maxSz int
+	clip  bool
+	logs  []LogEntry
 }
 
 func NewStdReadScan(maxSz int) *StdReadScan {
 	return &StdReadScan{
-		MaxSz: maxSz,
-		Logs:  make([]LogEntry, 0, maxSz/avgLogSize),
+		maxSz: maxSz,
+		logs:  make([]LogEntry, 0, maxSz/avgLogSize),
 	}
 }
 
 func (sr *StdReadScan) Scan(entry LogEntry) bool {
 	sz := entry.Size()
-	if sr.Sz += sz; sr.Sz > sr.MaxSz {
-		sr.Clip = true
-		sr.Sz -= sz
+	if sr.sz += sz; sr.sz > sr.maxSz {
+		sr.clip = true
+		sr.sz -= sz
 		return true
 	}
 
-	sr.Logs = append(sr.Logs, entry)
+	sr.logs = append(sr.logs, entry)
 	return false
+}
+
+func (sr *StdReadScan) Bind() ScanFuncT {
+	return sr.Scan
+}
+
+func (sr *StdReadScan) Result() ScanResultT {
+	return ScanResultT{
+		Sz:   sr.sz,
+		Clip: sr.clip,
+		Logs: sr.logs,
+	}
 }

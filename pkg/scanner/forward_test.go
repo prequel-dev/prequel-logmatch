@@ -47,11 +47,13 @@ func TestJsonCustomCorrupt(t *testing.T) {
 		t.Errorf("Expected nil error got %v", err)
 	}
 
-	if len(sr.Logs) != 6 {
-		t.Errorf("Expected %d entries, got %d", 6, len(sr.Logs))
+	res := sr.Result()
+
+	if len(res.Logs) != 6 {
+		t.Errorf("Expected %d entries, got %d", 6, len(res.Logs))
 	}
 
-	if sr.Clip {
+	if res.Clip {
 		t.Errorf("Expected no clip")
 	}
 }
@@ -77,11 +79,13 @@ func TestJsonCustomLogsExtraLF(t *testing.T) {
 		t.Errorf("Expected nil error got %v", err)
 	}
 
-	if len(sr.Logs) != 8 {
-		t.Errorf("Expected %d entries, got %d", 8, len(sr.Logs))
+	res := sr.Result()
+
+	if len(res.Logs) != 8 {
+		t.Errorf("Expected %d entries, got %d", 8, len(res.Logs))
 	}
 
-	if sr.Clip {
+	if res.Clip {
 		t.Errorf("Expected no clip")
 	}
 }
@@ -95,17 +99,19 @@ func TestJsonLogsCorrupt(t *testing.T) {
 		rdr     = strings.NewReader(corrupted)
 	)
 
-	err := ScanForward(rdr, f.ReadEntry, sr.Scan, WithMaxSize(maxSz))
+	err := ScanForward(rdr, f.ReadEntry, sr.Bind(), WithMaxSize(maxSz))
 
 	if err != nil {
 		t.Errorf("Expected nil error got %v", err)
 	}
 
-	if len(sr.Logs) != 6 {
-		t.Errorf("Expected %d entries, got %d", 6, len(sr.Logs))
+	res := sr.Result()
+
+	if len(res.Logs) != 6 {
+		t.Errorf("Expected %d entries, got %d", 6, len(res.Logs))
 	}
 
-	if sr.Clip {
+	if res.Clip {
 		t.Errorf("Expected no clip")
 	}
 }
@@ -126,11 +132,13 @@ func TestJsonLogsExtraLF(t *testing.T) {
 		t.Errorf("Expected nil error got %v", err)
 	}
 
-	if len(sr.Logs) != 8 {
-		t.Errorf("Expected %d entries, got %d", 8, len(sr.Logs))
+	res := sr.Result()
+
+	if len(res.Logs) != 8 {
+		t.Errorf("Expected %d entries, got %d", 8, len(res.Logs))
 	}
 
-	if sr.Clip {
+	if res.Clip {
 		t.Errorf("Expected no clip")
 	}
 }
@@ -174,16 +182,18 @@ func TestJsonLogsMaxSize(t *testing.T) {
 				t.Errorf("Expected %v error got %v", tc.wantErr, err)
 			}
 
-			if len(sr.Logs) != tc.wantLen {
-				t.Errorf("Expected %d entries, got %d", tc.wantLen, len(sr.Logs))
+			res := sr.Result()
+
+			if len(res.Logs) != tc.wantLen {
+				t.Errorf("Expected %d entries, got %d", tc.wantLen, len(res.Logs))
 			}
 
-			if sr.Clip != tc.wantClipped {
-				t.Errorf("Expected %v clip, got %v", tc.wantClipped, sr.Clip)
+			if res.Clip != tc.wantClipped {
+				t.Errorf("Expected %v clip, got %v", tc.wantClipped, res.Clip)
 			}
 
-			if sr.Sz != tc.wantUsed {
-				t.Errorf("Expected %v BufUsed, got %v", tc.wantUsed, sr.Sz)
+			if res.Sz != tc.wantUsed {
+				t.Errorf("Expected %v BufUsed, got %v", tc.wantUsed, res.Sz)
 			}
 		})
 	}
