@@ -2,6 +2,8 @@ package scanner
 
 import (
 	"bufio"
+	"errors"
+	"io"
 	"math"
 	"strings"
 	"testing"
@@ -196,5 +198,28 @@ func TestJsonLogsMaxSize(t *testing.T) {
 				t.Errorf("Expected %v BufUsed, got %v", tc.wantUsed, res.Sz)
 			}
 		})
+	}
+}
+
+func TestForwardScanErrFuncExecutes(t *testing.T) {
+	called := false
+	customError := errors.New("custom error")
+
+	errFunc := func(line []byte, err error) error {
+		called = true
+		return customError
+	}
+	parseF := func(line []byte) (LogEntry, error) {
+		return LogEntry{}, io.ErrUnexpectedEOF
+	}
+	scanF := func(entry LogEntry) bool { return false }
+	rdr := strings.NewReader("badline\n")
+	// Use WithErrFunc to install the error function
+	err := ScanForward(rdr, parseF, scanF, WithErrFunc(errFunc))
+	if err != customError {
+		t.Errorf("Expected %v error, got %v", customError, err)
+	}
+	if !called {
+		t.Errorf("Error function was not called")
 	}
 }

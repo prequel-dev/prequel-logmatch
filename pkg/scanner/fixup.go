@@ -9,7 +9,7 @@ import (
 // Expects utf8 offset hits for corresponding string 's'
 // - len(hit) == 2
 // - hit[0] < hit[1]
-// - hit[1] < len(s)
+// - hit[1] <= len(s)
 // Returns new slice with hits aligned to corresponding utf16 characters
 
 func hitToUtf16(s string, hit []int) []int {
@@ -52,7 +52,7 @@ func hitsToUtf16(s string, hits [][]int) [][]int {
 				Int("len(hit)", len(hit)).
 				Msg("Unexpected hit size from FindAllStringIndex")
 			return nil
-		} else if hit[0] >= hit[1] || hit[1] >= szLine {
+		} else if hit[0] >= hit[1] || hit[1] > szLine {
 			log.Warn().
 				Int("sz", szLine).
 				Int("hit[0]", hit[0]).
