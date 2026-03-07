@@ -61,3 +61,28 @@ func TestFixupUTF16(t *testing.T) {
 		})
 	}
 }
+
+func TestHitsToUtf16(t *testing.T) {
+	// Valid hits
+	hits := [][]int{{1, 2}, {2, 3}}
+	s := "abc"
+	nHits := hitsToUtf16(s, hits)
+	if len(nHits) != 2 {
+		t.Errorf("hitsToUtf16 should return 2 slices")
+	}
+	// Invalid hit size
+	badHits := [][]int{{1}}
+	if hitsToUtf16(s, badHits) != nil {
+		t.Errorf("hitsToUtf16 should return nil for bad hit size")
+	}
+	// Invalid hit values
+	badHits2 := [][]int{{2, 1}}
+	if hitsToUtf16(s, badHits2) != nil {
+		t.Errorf("hitsToUtf16 should return nil for bad hit values")
+	}
+	// Out of bounds
+	badHits3 := [][]int{{0, 4}}
+	if hitsToUtf16(s, badHits3) != nil {
+		t.Errorf("hitsToUtf16 should return nil for out of bounds")
+	}
+}

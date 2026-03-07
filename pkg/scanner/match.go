@@ -72,9 +72,10 @@ func (sr *MatchScan) Bind() ScanFuncT {
 			}
 		}
 
-		if sr.sz += entry.Size(); sr.sz > sr.maxSz {
+		sz := entry.Size()
+		if sr.sz += sz; sr.sz > sr.maxSz {
 			sr.clip = true
-			sr.sz -= entry.Size()
+			sr.sz -= sz
 			return true
 		}
 
