@@ -31,10 +31,10 @@ const (
 type mfuncT func(line string) ([][]int, bool)
 
 type MatchScan struct {
-	Sz    int
-	MaxSz int
-	Clip  bool
-	Logs  []LogEntry
+	sz    int
+	maxSz int
+	clip  bool
+	logs  []LogEntry
 
 	flags MatchFlagT
 	exprs []ExprT
@@ -43,14 +43,14 @@ type MatchScan struct {
 func NewMatchScan(maxSz int, flags MatchFlagT, exprs []ExprT) *MatchScan {
 
 	return &MatchScan{
-		MaxSz: maxSz,
-		Logs:  make([]LogEntry, 0, maxSz/avgLogSize),
+		maxSz: maxSz,
+		logs:  make([]LogEntry, 0, maxSz/avgLogSize),
 		flags: flags,
 		exprs: exprs,
 	}
 }
 
-func (sr *MatchScan) Bind() func(entry LogEntry) bool {
+func (sr *MatchScan) Bind() ScanFuncT {
 
 	var (
 		forceUtf16 = sr.flags&MatchForceUTF16 != 0
@@ -72,14 +72,22 @@ func (sr *MatchScan) Bind() func(entry LogEntry) bool {
 			}
 		}
 
-		if sr.Sz += entry.Size(); sr.Sz > sr.MaxSz {
-			sr.Clip = true
-			sr.Sz -= entry.Size()
+		if sr.sz += entry.Size(); sr.sz > sr.maxSz {
+			sr.clip = true
+			sr.sz -= entry.Size()
 			return true
 		}
 
-		sr.Logs = append(sr.Logs, entry)
+		sr.logs = append(sr.logs, entry)
 		return false
+	}
+}
+
+func (sr *MatchScan) Result() ScanResultT {
+	return ScanResultT{
+		Sz:   sr.sz,
+		Clip: sr.clip,
+		Logs: sr.logs,
 	}
 }
 
