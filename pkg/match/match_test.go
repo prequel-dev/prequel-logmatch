@@ -18,17 +18,17 @@ func TestMatchJson(t *testing.T) {
 	}
 
 	// Happy path
-	if !m(`{"shrubbery":"apple"}`) {
+	if !m(scanLineFromLine(`{"shrubbery":"apple"}`)) {
 		t.Errorf("Expected match, got fail.")
 	}
 
 	// Sad path
-	if m(`{"nope":"apple"}`) {
+	if m(scanLineFromLine(`{"nope":"apple"}`)) {
 		t.Errorf("Expected no match, got match.")
 	}
 
 	// Error path
-	if m(`not json`) {
+	if m(scanLineFromLine(`not json`)) {
 		t.Errorf("Expected no match, got match.")
 	}
 }
@@ -46,7 +46,7 @@ func TestMatchJsonHalt(t *testing.T) {
 	}
 
 	// Fail path
-	if m(`{"a":"shrubbery"}`) {
+	if m(scanLineFromLine(`{"a":"shrubbery"}`)) {
 		t.Errorf("Expected no match, got match.")
 	}
 
@@ -60,12 +60,12 @@ func TestNewJqJson(t *testing.T) {
 	}
 
 	// Happy path
-	if !m(`{"shrubbery":"apple"}`) {
+	if !m(scanLineFromLine(`{"shrubbery":"apple"}`)) {
 		t.Errorf("Expected match, got fail.")
 	}
 
 	// Sad path
-	if m(`{"nope":"apple"}`) {
+	if m(scanLineFromLine(`{"nope":"apple"}`)) {
 		t.Errorf("Expected no match, got match.")
 	}
 }
@@ -92,7 +92,7 @@ func TestJqJsonBadLine(t *testing.T) {
 		t.Fatalf("Expected nil, got :%v", err)
 	}
 
-	badLine := `apple, but not json`
+	badLine := scanLineFromLine(`apple, but not json`)
 
 	// Execute path for coverage
 	if mFunc(badLine) {
@@ -117,12 +117,12 @@ func TestMatchJsonString(t *testing.T) {
 	}
 
 	// Happy path
-	if !m(`{"shrubbery":"apple"}`) {
+	if !m(scanLineFromLine(`{"shrubbery":"apple"}`)) {
 		t.Errorf("Expected match, got fail.")
 	}
 
 	// Sad path
-	if m(`{"shrubbery":"xapple"}`) {
+	if m(scanLineFromLine(`{"shrubbery":"xapple"}`)) {
 		t.Errorf("Expected no match, got match.")
 	}
 
@@ -140,16 +140,16 @@ func TestMatchJsonRegex(t *testing.T) {
 	}
 
 	// Happy path
-	if !m(`{"shrubbery":"apple"}`) {
+	if !m(scanLineFromLine(`{"shrubbery":"apple"}`)) {
 		t.Errorf("Expected match, got fail.")
 	}
 
-	if !m(`{"shrubbery":"applex"}`) {
+	if !m(scanLineFromLine(`{"shrubbery":"applex"}`)) {
 		t.Errorf("Expected match, got fail.")
 	}
 
 	// Sad path
-	if m(`{"shrubbery":"banana"}`) {
+	if m(scanLineFromLine(`{"shrubbery":"banana"}`)) {
 		t.Errorf("Expected no match, got match.")
 	}
 }
@@ -166,12 +166,12 @@ func TestMatchYaml(t *testing.T) {
 	}
 
 	// Happy path
-	if !m(`shrubbery: apple`) {
+	if !m(scanLineFromLine(`shrubbery: apple`)) {
 		t.Errorf("Expected match, got fail.")
 	}
 
 	// Sad path
-	if m(`nope: apple`) {
+	if m(scanLineFromLine(`nope: apple`)) {
 		t.Errorf("Expected no match, got match.")
 	}
 }
@@ -188,12 +188,12 @@ func TestMatchRegex(t *testing.T) {
 	}
 
 	// Happy path
-	if !m(`HELLO`) {
+	if !m(scanLineFromLine(`HELLO`)) {
 		t.Errorf("Expected match, got fail.")
 	}
 
 	// Sad path
-	if m(`hello`) {
+	if m(scanLineFromLine(`hello`)) {
 		t.Errorf("Expected no match, got match.")
 	}
 }
@@ -244,7 +244,7 @@ func TestJqYamlBadLine(t *testing.T) {
 		t.Fatalf("Expected nil, got :%v", err)
 	}
 
-	badLine := `apple, but not yaml`
+	badLine := scanLineFromLine(`apple, but not yaml`)
 
 	// Execute path for coverage
 	if mFunc(badLine) {
@@ -337,11 +337,16 @@ func BenchmarkMatchJson(b *testing.B) {
 		m3, _ = tt3.NewMatcher()
 	)
 
+	l1 := NewScanLine().ResetLine(0, jsonData)
+	l2 := NewScanLine().ResetLine(0, "{}")
+	lines := []*ScanLine{l1, l2}
+
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		m1(jsonData)
-		m2(jsonData)
-		m3(jsonData)
+	for i := range b.N {
+		e := lines[i%2]
+		m1(e)
+		m2(e)
+		m3(e)
 	}
 
 }
@@ -545,7 +550,9 @@ func TestJqMatchRuntimeFailures(t *testing.T) {
 				t.Fatalf("Failed to create matcher: %v", err)
 			}
 
-			result := matcher(tt.input)
+			e := NewScanLine().ResetLine(0, tt.input)
+
+			result := matcher(e)
 			if result != tt.expected {
 				t.Errorf("Expected %v for input %q, got %v", tt.expected, tt.input, result)
 			}
@@ -603,7 +610,7 @@ func TestJqMatchWithCachedUnmarshaling(t *testing.T) {
 		t.Fatalf("Failed to create matcher: %v", err)
 	}
 
-	input := "{\"field\": \"value\"}"
+	input := scanLineFromLine("{\"field\": \"value\"}")
 
 	// First call - should unmarshal
 	result1 := matcher(input)
@@ -618,7 +625,8 @@ func TestJqMatchWithCachedUnmarshaling(t *testing.T) {
 	}
 
 	// Third call with different input - should unmarshal again
-	result3 := matcher("{\"field\": \"different\"}")
+	input = scanLineFromLine("{\"field\": \"different\"}")
+	result3 := matcher(input)
 	if !result3 {
 		t.Error("Expected true for different input")
 	}
@@ -637,8 +645,13 @@ func TestJqMatchErrorHandling(t *testing.T) {
 	}
 
 	// This should trigger the error path in the jq query
-	result := matcher("{\"field\": 123}")
+	input := scanLineFromLine("{\"field\": 123}")
+	result := matcher(input)
 	if result {
 		t.Error("Expected false when jq query has runtime error")
 	}
+}
+
+func scanLineFromLine(line string) *ScanLine {
+	return NewScanLine().ResetLine(0, line)
 }

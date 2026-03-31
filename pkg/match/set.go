@@ -32,7 +32,7 @@ func NewMatchSet(window int64, setTerms ...TermT) (*MatchSet, error) {
 	}, nil
 }
 
-func (r *MatchSet) Scan(e LogEntry) (hits Hits) {
+func (r *MatchSet) Scan(e *ScanLine) (hits Hits) {
 	if e.Timestamp < r.clock {
 		log.Warn().
 			Str("line", e.Line).
@@ -48,9 +48,9 @@ func (r *MatchSet) Scan(e LogEntry) (hits Hits) {
 	// For a set, must scan all terms.
 	// Cannot short circuit like a sequence.
 	for i, term := range r.terms {
-		if term.matcher(e.Line) {
+		if term.matcher(e) {
 			// Append the match to the assert list
-			r.terms[i].asserts = append(r.terms[i].asserts, e)
+			r.terms[i].asserts = append(r.terms[i].asserts, e.LogEntry)
 
 			if dupeCnt := r.dupeMap[i]; len(r.terms[i].asserts) > dupeCnt {
 				r.hotMask.Set(i)

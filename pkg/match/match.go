@@ -1,7 +1,6 @@
 package match
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -9,7 +8,6 @@ import (
 
 	"github.com/prequel-dev/prequel-logmatch/pkg/entry"
 
-	"github.com/goccy/go-yaml"
 	"github.com/itchyny/gojq"
 	"github.com/rs/zerolog/log"
 )
@@ -22,7 +20,7 @@ var (
 
 type Matcher interface {
 	Eval(int64) Hits
-	Scan(e entry.LogEntry) Hits
+	Scan(*ScanLine) Hits
 	GarbageCollect(int64)
 }
 
@@ -65,7 +63,7 @@ type TermT struct {
 	Value string
 }
 
-type MatchFunc func(string) bool
+type MatchFunc func(*ScanLine) bool
 
 func (tt TermT) NewMatcher() (m MatchFunc, err error) {
 
@@ -97,8 +95,8 @@ func IsRegex(v string) bool {
 }
 
 func makeRawMatch(s string) MatchFunc {
-	return func(line string) bool {
-		return strings.Contains(line, s)
+	return func(e *ScanLine) bool {
+		return strings.Contains(e.Line, s)
 	}
 }
 
@@ -108,53 +106,20 @@ func makeRegexMatch(term string) (MatchFunc, error) {
 		return nil, err
 	}
 
-	return func(line string) bool {
-		return exp.MatchString(line)
+	return func(e *ScanLine) bool {
+		return exp.MatchString(e.Line)
 	}, nil
 }
 
-func makeJsonUnmarshal() func(string) (any, error) {
-	// memorize unmarshaller; this avoids unmarshalling
-	// multiple times if there is more than one Jq matcher installed
-
-	var (
-		lastLine  string
-		lastError error
-		lastValue any
-	)
-
-	return func(line string) (any, error) {
-		if line == lastLine {
-			return lastValue, lastError
-		}
-		lastLine = line
-		lastError = json.Unmarshal([]byte(line), &lastValue)
-		return lastValue, lastError
-	}
+func jsonUnmarshalThunk(e *ScanLine) (any, error) {
+	return e.DecodeJson()
 }
 
-func makeYamlUnmarshal() func(string) (any, error) {
-	// memorize unmarshaller; this avoids unmarshalling
-	// multiple times if there is more than one Jq matcher installed
-
-	var (
-		lastLine  string
-		lastError error
-		lastValue any
-	)
-
-	return func(line string) (any, error) {
-		if line == lastLine {
-			return lastValue, lastError
-		}
-		lastLine = line
-		lastError = yaml.Unmarshal([]byte(line), &lastValue)
-		return lastValue, lastError
-	}
+func yamlUnmarshalThunk(e *ScanLine) (any, error) {
+	return e.DecodeYaml()
 }
 
 func NewJqJson(term string) (MatchFunc, error) {
-	unmarshal := makeJsonUnmarshal()
 
 	query, err := gojq.Parse(term)
 	if err != nil {
@@ -166,7 +131,7 @@ func NewJqJson(term string) (MatchFunc, error) {
 		return nil, fmt.Errorf("%w: compile fail: %w", ErrTermCompile, err)
 	}
 
-	return _makeJqMatch(term, code, unmarshal), nil
+	return _makeJqMatch(term, code, jsonUnmarshalThunk), nil
 }
 
 func makeJqMatch(term TermT) (MatchFunc, error) {
@@ -174,9 +139,9 @@ func makeJqMatch(term TermT) (MatchFunc, error) {
 
 	switch term.Type {
 	case TermJqJson:
-		unmarshal = makeJsonUnmarshal()
+		unmarshal = jsonUnmarshalThunk
 	case TermJqYaml:
-		unmarshal = makeYamlUnmarshal()
+		unmarshal = yamlUnmarshalThunk
 	default:
 		return nil, errors.New("unknown jq format")
 	}
@@ -194,21 +159,20 @@ func makeJqMatch(term TermT) (MatchFunc, error) {
 	return _makeJqMatch(term.Value, code, unmarshal), nil
 }
 
-type unmarshalFuncT func(string) (any, error)
+type unmarshalFuncT func(e *ScanLine) (any, error)
 
 func _makeJqMatch(term string, code *gojq.Code, unmarshal unmarshalFuncT) MatchFunc {
-	return func(line string) (match bool) {
+	return func(e *ScanLine) (match bool) {
 		// Avoid unnecessary allocation on the cast
 		var (
 			err error
 			v   any
 		)
 
-		// This is obviously not ideal;  unmarshal the entire payload
-		// just to do a matching check is extremely wasteful.
-		// Ideally we'd have an inline matcher for both JSON and YAML.
-		if v, err = unmarshal(line); err != nil {
-			log.Debug().Err(err).Str("line", line).Msg("Fail parse JSON log line")
+		// Unmarshal the line (JSON or YAML) into an interface{} for gojq to consume.
+		// The ScanLine will cache the result, so this is only expensive on the first call for a given line.
+		if v, err = unmarshal(e); err != nil {
+			log.Debug().Err(err).Str("line", e.Line).Msg("Fail parse log line")
 			return false
 		}
 		iter := code.Run(v)
@@ -222,9 +186,9 @@ func _makeJqMatch(term string, code *gojq.Code, unmarshal unmarshalFuncT) MatchF
 					break
 				}
 				log.Debug().Err(err).
-					Str("line", line).
+					Str("line", e.Line).
 					Str("term", term).
-					Msg("Fail jq query on JSON line")
+					Msg("Fail jq query")
 				match = false
 				break
 			}

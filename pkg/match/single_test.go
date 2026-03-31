@@ -79,7 +79,7 @@ func BenchmarkSingleMiss(b *testing.B) {
 
 	var (
 		clock int64
-		ev1   = LogEntry{Line: "nope"}
+		ev1   = NewScanLine().ResetLine(0, "nope")
 	)
 
 	b.ReportAllocs()
@@ -100,7 +100,7 @@ func BenchmarkSingleHit(b *testing.B) {
 
 	var (
 		clock int64
-		ev1   = LogEntry{Line: "Bring me a shrubbery"}
+		ev1   = NewScanLine().ResetLine(0, "Bring me a shrubbery")
 	)
 
 	b.ReportAllocs()

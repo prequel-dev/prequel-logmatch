@@ -17,11 +17,11 @@ func NewMatchSingle(term TermT) (*MatchSingle, error) {
 	return &MatchSingle{matcher: m}, nil
 }
 
-func (r *MatchSingle) Scan(e entry.LogEntry) (hits Hits) {
+func (r *MatchSingle) Scan(e *ScanLine) (hits Hits) {
 
-	if r.matcher(e.Line) {
+	if r.matcher(e) {
 		hits.Cnt = 1
-		hits.Logs = []entry.LogEntry{e}
+		hits.Logs = []entry.LogEntry{e.LogEntry}
 	}
 
 	return

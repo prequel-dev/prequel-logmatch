@@ -17,7 +17,7 @@ func NewStdReadScan(maxSz int) *StdReadScan {
 }
 
 func (sr *StdReadScan) Scan(entry LogEntry) bool {
-	sz := entry.Size()
+	sz := entry.UpperBound()
 	if sr.sz += sz; sr.sz > sr.maxSz {
 		sr.clip = true
 		sr.sz -= sz

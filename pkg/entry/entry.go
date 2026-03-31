@@ -14,7 +14,7 @@ type LogEntry struct {
 // Uses msgpack size as an estimate;  not exactly right.
 // Cannot use e.MsgSize() because it doesn't properly account for omitted matches
 
-func (z LogEntry) Size() (s int) {
+func (z LogEntry) UpperBound() (s int) {
 	// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 	s = 1 + 2 + msgp.StringPrefixSize + len(z.Line) + 2 + msgp.StringPrefixSize + len(z.Stream) + 2 + msgp.Int64Size
 

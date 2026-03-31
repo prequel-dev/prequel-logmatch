@@ -5,7 +5,6 @@ import (
 	"math"
 	"slices"
 
-	"github.com/prequel-dev/prequel-logmatch/pkg/entry"
 	"github.com/rs/zerolog/log"
 )
 
@@ -65,7 +64,7 @@ func NewInverseSet(window int64, setTerms []TermT, resetTerms []ResetT) (*Invers
 	}, nil
 }
 
-func (r *InverseSet) Scan(e entry.LogEntry) (hits Hits) {
+func (r *InverseSet) Scan(e *ScanLine) (hits Hits) {
 	if e.Timestamp < r.clock {
 		log.Warn().
 			Str("line", e.Line).
@@ -81,9 +80,9 @@ func (r *InverseSet) Scan(e entry.LogEntry) (hits Hits) {
 	// For a set, must scan all terms.
 	// Cannot short circuit like a sequence.
 	for i, term := range r.terms {
-		if term.matcher(e.Line) {
+		if term.matcher(e) {
 			// Append the match to the assert list
-			r.terms[i].asserts = append(r.terms[i].asserts, e)
+			r.terms[i].asserts = append(r.terms[i].asserts, e.LogEntry)
 
 			// If not a dupe or we've hit the dupe count, set the hot mask
 			if dupeCnt := r.dupeMap[i]; len(r.terms[i].asserts) > dupeCnt {
@@ -102,7 +101,7 @@ func (r *InverseSet) Scan(e entry.LogEntry) (hits Hits) {
 
 	// Run resets
 	for i, reset := range r.resets {
-		if reset.matcher(e.Line) {
+		if reset.matcher(e) {
 			r.resets[i].resets = append(reset.resets, e.Timestamp)
 			r.resetGcMark(e.Timestamp + r.gcLeft + r.gcRight)
 		}

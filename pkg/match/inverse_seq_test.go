@@ -830,7 +830,7 @@ func BenchmarkSeqInverseMisses(b *testing.B) {
 		b.Fatalf("Expected err == nil, got %v", err)
 	}
 
-	noop := LogEntry{Line: "NOOP", Timestamp: time.Now().UnixNano()}
+	noop := NewScanLine().ResetLine(time.Now().UnixNano(), "NOOP")
 
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
@@ -854,7 +854,7 @@ func BenchmarkSeqInverseMissesWithReset(b *testing.B) {
 		b.Fatalf("Expected err == nil, got %v", err)
 	}
 
-	noop := LogEntry{Line: "NOOP", Timestamp: time.Now().UnixNano()}
+	noop := NewScanLine().ResetLine(time.Now().UnixNano(), "NOOP")
 
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
@@ -872,8 +872,8 @@ func BenchmarkSeqInverseHitSequence(b *testing.B) {
 	}
 
 	ts := time.Now().UnixNano()
-	ev1 := LogEntry{Line: "Let's be frank"}
-	ev2 := LogEntry{Line: "Mr burns I am"}
+	ev1 := NewScanLine().ResetLine(ts, "Let's be frank")
+	ev2 := NewScanLine().ResetLine(ts, "Mr burns I am")
 
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
@@ -898,8 +898,8 @@ func BenchmarkSeqInverseHitOverlap(b *testing.B) {
 
 	var (
 		ts  = time.Now().UnixNano()
-		ev1 = LogEntry{Line: "Let's be frank"}
-		ev2 = LogEntry{Line: "Mr burns I am"}
+		ev1 = NewScanLine().ResetLine(ts, "Let's be frank")
+		ev2 = NewScanLine().ResetLine(ts, "Mr burns I am")
 	)
 
 	b.ReportAllocs()
@@ -931,7 +931,7 @@ func BenchmarkSeqInverseRunawayMatch(b *testing.B) {
 	}
 
 	var (
-		ev1 = LogEntry{Line: "Let's be frank"}
+		ev1 = NewScanLine().ResetLine(0, "Let's be frank")
 	)
 
 	b.ReportAllocs()
@@ -951,8 +951,8 @@ func BenchmarkSeqInverseDupes(b *testing.B) {
 
 	var (
 		clock int64
-		ev1   = LogEntry{Line: "Bring me a shrubbery"}
-		ev2   = LogEntry{Line: "Let's be frank"}
+		ev1   = NewScanLine().ResetLine(0, "Bring me a shrubbery")
+		ev2   = NewScanLine().ResetLine(0, "Let's be frank")
 	)
 
 	b.ReportAllocs()
@@ -1002,8 +1002,8 @@ func BenchmarkSeqInverseDupesWithResets(b *testing.B) {
 
 	var (
 		clock int64
-		ev1   = LogEntry{Line: "Bring me a shrubbery"}
-		ev2   = LogEntry{Line: "Let's be frank"}
+		ev1   = NewScanLine().ResetLine(0, "Bring me a shrubbery")
+		ev2   = NewScanLine().ResetLine(0, "Let's be frank")
 	)
 
 	b.ReportAllocs()
