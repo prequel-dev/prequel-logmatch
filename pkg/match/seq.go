@@ -39,7 +39,7 @@ func NewMatchSeq(window int64, seqTerms ...TermT) (*MatchSeq, error) {
 	}, nil
 }
 
-func (r *MatchSeq) Scan(e LogEntry) (hits Hits) {
+func (r *MatchSeq) Scan(e *ScanLine) (hits Hits) {
 
 	if e.Timestamp < r.clock {
 		log.Warn().
@@ -54,12 +54,12 @@ func (r *MatchSeq) Scan(e LogEntry) (hits Hits) {
 	r.maybeGC(e.Timestamp)
 
 	for i := range r.nActive {
-		if r.terms[i].matcher(e.Line) {
-			r.terms[i].asserts = append(r.terms[i].asserts, e)
+		if r.terms[i].matcher(e) {
+			r.terms[i].asserts = append(r.terms[i].asserts, e.LogEntry)
 		}
 	}
 
-	if !r.terms[r.nActive].matcher(e.Line) {
+	if !r.terms[r.nActive].matcher(e) {
 		// No match on active term; NOOP.
 		return
 	}
@@ -69,14 +69,14 @@ func (r *MatchSeq) Scan(e LogEntry) (hits Hits) {
 
 	if len(r.terms[r.nActive].asserts) < dupeCnt {
 		// Not enough dupes yet; append current for later.
-		r.terms[r.nActive].asserts = append(r.terms[r.nActive].asserts, e)
+		r.terms[r.nActive].asserts = append(r.terms[r.nActive].asserts, e.LogEntry)
 		return
 	}
 
 	// We matched the active term, but not the all terms yet.
 	// Advance the active term and append the current event.
 	if r.nActive+1 < len(r.terms) {
-		r.terms[r.nActive].asserts = append(r.terms[r.nActive].asserts, e)
+		r.terms[r.nActive].asserts = append(r.terms[r.nActive].asserts, e.LogEntry)
 		r.nActive += 1
 		return
 	}
@@ -102,7 +102,7 @@ func (r *MatchSeq) Scan(e LogEntry) (hits Hits) {
 	}
 
 	// And the final event that triggered this hit
-	hits.Logs = append(hits.Logs, e)
+	hits.Logs = append(hits.Logs, e.LogEntry)
 
 	// Update active so the miniGC can cleanup up correctly
 	r.nActive += 1

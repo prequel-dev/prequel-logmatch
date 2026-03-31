@@ -3,8 +3,6 @@ package match
 import (
 	"fmt"
 	"testing"
-
-	"github.com/prequel-dev/prequel-logmatch/pkg/entry"
 )
 
 type stepT struct {
@@ -49,7 +47,7 @@ func (c casesT) run(t *testing.T, factory func(caseT) (Matcher, error)) {
 
 				if step.line != "" {
 					var (
-						entry = entry.LogEntry{Timestamp: stamp, Line: step.line}
+						entry = NewScanLine().ResetLine(stamp, step.line)
 						hits  = sm.Scan(entry)
 					)
 

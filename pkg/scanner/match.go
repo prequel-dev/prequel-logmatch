@@ -72,7 +72,7 @@ func (sr *MatchScan) Bind() ScanFuncT {
 			}
 		}
 
-		sz := entry.Size()
+		sz := entry.UpperBound()
 		if sr.sz += sz; sr.sz > sr.maxSz {
 			sr.clip = true
 			sr.sz -= sz

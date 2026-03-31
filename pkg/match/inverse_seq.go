@@ -3,7 +3,6 @@ package match
 import (
 	"slices"
 
-	"github.com/prequel-dev/prequel-logmatch/pkg/entry"
 	"github.com/rs/zerolog/log"
 )
 
@@ -119,7 +118,7 @@ func maybeAnchor(nTerms int, dupeMap map[int]int, anchor uint8) bool {
 	return false
 }
 
-func (r *InverseSeq) Scan(e entry.LogEntry) (hits Hits) {
+func (r *InverseSeq) Scan(e *ScanLine) (hits Hits) {
 	if e.Timestamp < r.clock {
 		log.Warn().
 			Str("line", e.Line).
@@ -137,7 +136,7 @@ func (r *InverseSeq) Scan(e entry.LogEntry) (hits Hits) {
 	switch {
 	case len(r.terms[0].asserts) > 0:
 	case r.gcLeft > 0:
-	case !r.terms[0].matcher(e.Line):
+	case !r.terms[0].matcher(e):
 		return
 	default:
 		zeroMatch = true
@@ -145,7 +144,7 @@ func (r *InverseSeq) Scan(e entry.LogEntry) (hits Hits) {
 
 	// Run resets
 	for i, reset := range r.resets {
-		if reset.matcher(e.Line) {
+		if reset.matcher(e) {
 			r.resets[i].resets = append(reset.resets, e.Timestamp)
 			r.resetGcMark(e.Timestamp + r.gcLeft + r.gcRight)
 		}
@@ -153,8 +152,8 @@ func (r *InverseSeq) Scan(e entry.LogEntry) (hits Hits) {
 
 	// Run the active terms
 	for i := range r.nActive {
-		if r.terms[i].matcher(e.Line) {
-			r.terms[i].asserts = append(r.terms[i].asserts, e)
+		if r.terms[i].matcher(e) {
+			r.terms[i].asserts = append(r.terms[i].asserts, e.LogEntry)
 		}
 	}
 
@@ -162,12 +161,12 @@ func (r *InverseSeq) Scan(e entry.LogEntry) (hits Hits) {
 
 		switch {
 		case zeroMatch:
-		case !r.terms[r.nActive].matcher(e.Line):
+		case !r.terms[r.nActive].matcher(e):
 			// No match on active term; NOOP.
 			return
 		}
 
-		r.terms[r.nActive].asserts = append(r.terms[r.nActive].asserts, e)
+		r.terms[r.nActive].asserts = append(r.terms[r.nActive].asserts, e.LogEntry)
 		r.resetGcMark(e.Timestamp + r.gcRight)
 
 		// We have matched the active term; check if there are dupes before advancing.
