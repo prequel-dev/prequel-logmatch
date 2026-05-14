@@ -25,10 +25,12 @@ var Defaults = []FmtSpec{
 		Pattern: `"time":(\d{16,19})`,
 	},
 
+	// RFC3339 Beginning of line; space,pipe, or tab after timestamp
 	// Example: 2006-01-02T15:04:05Z07:00 <log message>
+	// Example: 2025-01-20T11:06:41.655Z|114883|poll_loop|INFO|wakeup due to [POLLOUT] on fd 56 (10.15.58.43:6642<->10.15.52.89:43910) at ../lib/stream-fd.c:153 (52% CPU usage
 	{
-		Format:  FmtRfc3339,
-		Pattern: `^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+\-]\d{2}:\d{2})) `,
+		Format:  FmtRfc3339Nano,
+		Pattern: `^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+\-]\d{2}:\d{2}))[ |\t]`,
 	},
 
 	// Example: 2025-05-17 16:09:12,46570 WARN  [vertx-blocked-thread-checker] BlockedThreadChecker: - Thread Thread[blocking-startup-ops-0,5,main] has been blocked for 60597 ms, time limit is 60000 ms
@@ -49,6 +51,13 @@ var Defaults = []FmtSpec{
 	{
 		Format:  TimestampFmt("2006-01-02 15:04:05.000"),
 		Pattern: `^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}) `,
+	},
+
+	// Example: 2025-03-11 14:05:05.303788+00:00 <log message>
+	// Source: ISO 8601 with microseconds and timezone offset
+	{
+		Format:  TimestampFmt("2006-01-02 15:04:05.999999-07:00"),
+		Pattern: `^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{6}[+-]\d{2}:\d{2}) `,
 	},
 
 	// Example: 2006-01-02 15:04:05 <log message>
@@ -128,18 +137,14 @@ var Defaults = []FmtSpec{
 		Pattern: `^(\d{4} [A-Z][a-z]{2} \d{2} \d{2}:\d{2}:\d{2}) `,
 	},
 
+	// RFC3339 in JSON with one of ["timestamp","ts","stamp","creationTimestamp"] key.
 	// Example: {"timestamp":"2025-03-26T14:01:02Z","level":"info", "message":"..."}
 	// Source: Postgres JSON output
+	// Example: {"creationTimestamp":"2025-04-23T20:50:35Z",...}
+	// Source: Kubernetes events, configmaps
 	{
-		Format:  FmtRfc3339,
-		Pattern: `"timestamp"\s*:\s*"([^"]+)"`,
-	},
-
-	// Example: {"ts":"2025-03-26T14:01:02Z","level":"info", "message":"..."}
-	// Source: metallb
-	{
-		Format:  FmtRfc3339,
-		Pattern: `"ts"\s*:\s*"([^"]+)"`,
+		Format:  FmtRfc3339Nano,
+		Pattern: `"(?:timestamp|ts|stamp|creationTimestamp)"\s*:\s*"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+\-]\d{2}:\d{2}))"`,
 	},
 
 	// Example: [7] 2025/04/25 02:01:04.339092 [ERR] ...
@@ -147,13 +152,6 @@ var Defaults = []FmtSpec{
 	{
 		Format:  TimestampFmt("2006/01/02 15:04:05.000000"),
 		Pattern: `^\[\d+\]\s+(\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}\.\d{6}) `,
-	},
-
-	// Example: {"creationTimestamp":"2025-04-23T20:50:35Z",...}
-	// Source: Kubernetes events, configmaps
-	{
-		Format:  FmtRfc3339,
-		Pattern: `"creationTimestamp":"([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)"`,
 	},
 
 	// Example: 2025-04-24T21:55:08.535-0500 INFO ...
@@ -177,13 +175,6 @@ var Defaults = []FmtSpec{
 		Pattern: `ts=([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{9}Z)`,
 	},
 
-	// Example: {"event": "...", "timestamp": "2025-02-12T18:12:58.715528Z", ...}
-	// Source: DataDog
-	{
-		Format:  TimestampFmt("2006-01-02T15:04:05.000000Z"),
-		Pattern: `"timestamp"\s*:\s*"([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}Z)"`,
-	},
-
 	// Example: {"TimeCreated":"\/Date(1743448267142)\/"}
 	// Source: Windows events via Get-Events w/ JSON output
 	{
@@ -194,8 +185,23 @@ var Defaults = []FmtSpec{
 	// Example: time="2025-02-12T18:12:58.715528Z"
 	// Source: argocd
 	{
-		Format:  FmtRfc3339,
-		Pattern: `time="([^"]+)"`,
+		Format:  FmtRfc3339Nano,
+		Pattern: `time="(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+\-]\d{2}:\d{2}))"`,
+	},
+
+	// Example: 2025-06-10 02:41:14,429 - INFO - Closing connection [IPv6 ('::1', 9092, 0, 0)]
+	// Source: Red Panda
+	// Example: 2025-01-22 15:36:20,978: ERROR/ForkPoolWorker-6] Failed to create...
+	// Source: Terraform
+	{
+		Format:  TimestampFmt("2006-01-02 15:04:05,000"),
+		Pattern: `^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})[ :]`,
+	},
+
+	// RFC 3339 derivative with space instead of T and optional timezone offset
+	{
+		Format:  TimestampFmt("2006-01-02 15:04:05.000-07:00"),
+		Pattern: `^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}[+\-]\d{2}:\d{2}) `,
 	},
 }
 
