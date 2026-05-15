@@ -95,6 +95,13 @@ func calcGCWindow(window int64, resets []resetT) (int64, int64) {
 		}
 	}
 
+	// If we have zero window and no slide on reset, adjust gcLeft to 1.
+	// This ensures that we keep reset terms with same timestamp as the anchor term
+	// around for one more tick in case it is followed by a match with the same timestamp.
+	if window == 0 && len(resets) > 0 && left == 0 {
+		return 1, right
+	}
+
 	return (-1 * left), right
 }
 

@@ -617,6 +617,24 @@ func NewCasesSetResets() casesT {
 			},
 		},
 
+		"ResetBeforeMatchOnZeroWindow": {
+			// -2--------------- alpha
+			// -1--------------- reset
+			// Zero window, but reset should still deny matches with same timestamp, and should not cause errors.
+			window: 0,
+			terms:  []string{"alpha"},
+			reset: []ResetT{
+				{
+					Term: makeRaw("reset"),
+				},
+			},
+			steps: []stepT{
+				{line: "reset", stamp: 1},
+				{line: "alpha", stamp: 1},
+				{line: "NOOP"}, // Force eval on alpha, should not fire due to reset on same timestamp
+			},
+		},
+
 		// // Disabled test; known logical flaw in inverset set with dupes causes this test to fail.
 		// "ResetDupesWithAnchorMiss": {
 		// 	window: 5,

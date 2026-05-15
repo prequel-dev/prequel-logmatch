@@ -500,6 +500,26 @@ func NewCasesSeqResets() casesT {
 			},
 		},
 
+		"ResetBeforeMatchOnZeroWindow": {
+			// -2--------------- alpha
+			// -1--------------- reset
+			// Zero window, but reset should still deny matches with same timestamp, and should not cause errors.
+			window: 0,
+			terms:  []string{"alpha", "beta"},
+			reset: []ResetT{
+				{
+					Term:     makeRaw("reset"),
+					Absolute: true,
+				},
+			},
+			steps: []stepT{
+				{line: "reset", stamp: 1},
+				{line: "alpha", stamp: 1},
+				{line: "beta", stamp: 1},
+				{line: "NOOP"}, // Force eval on alpha, should not fire due to reset on same timestamp
+			},
+		},
+
 		// // Disabled test; non-zero anchors on dupe terms not supported.
 		// "ResetDupesWithAnchorFire": {
 		// 	window: 5,
